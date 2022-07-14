@@ -4,9 +4,13 @@ use prost::Message;
 
 use crate::proto::{CompressionKind, Footer, Metadata, PostScript, StripeFooter};
 
-const DEFAULT_FOOTER_SIZE: u64 = 16 * 1024;
+use super::Error;
 
 pub mod decode;
+mod stripe;
+pub use stripe::Stripe;
+
+const DEFAULT_FOOTER_SIZE: u64 = 16 * 1024;
 
 // see (unstable) Seek::stream_len
 fn stream_len(seek: &mut impl Seek) -> std::result::Result<u64, std::io::Error> {
@@ -22,7 +26,7 @@ fn stream_len(seek: &mut impl Seek) -> std::result::Result<u64, std::io::Error> 
     Ok(len)
 }
 
-pub fn read_metadata<R>(reader: &mut R) -> Result<(PostScript, Footer, Metadata), std::io::Error>
+pub fn read_metadata<R>(reader: &mut R) -> Result<(PostScript, Footer, Metadata), Error>
 where
     R: Read + Seek,
 {
@@ -100,10 +104,7 @@ macro_rules! deserialize {
     }};
 }
 
-fn deserialize_footer(
-    footer: &[u8],
-    compression: CompressionKind,
-) -> Result<Footer, std::io::Error> {
+fn deserialize_footer(footer: &[u8], compression: CompressionKind) -> Result<Footer, Error> {
     let f = Footer::decode;
     deserialize!(footer, compression, f)
 }
@@ -111,15 +112,15 @@ fn deserialize_footer(
 fn deserialize_footer_metadata(
     bytes: &[u8],
     compression: CompressionKind,
-) -> Result<Metadata, std::io::Error> {
+) -> Result<Metadata, Error> {
     let f = Metadata::decode;
     deserialize!(bytes, compression, f)
 }
 
-pub fn deserialize_stripe_footer(
+fn deserialize_stripe_footer(
     bytes: &[u8],
     compression: CompressionKind,
-) -> Result<StripeFooter, std::io::Error> {
+) -> Result<StripeFooter, Error> {
     let f = StripeFooter::decode;
     deserialize!(bytes, compression, f)
 }

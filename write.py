@@ -2,7 +2,9 @@ import pyarrow as pa
 import pyarrow.orc
 
 table = pa.Table.from_arrays(
-    [pa.array([1.0, None, 3.0])], schema=pa.schema([("a", pa.float32())])
+    [pa.array([1.0, 2.0, 3.0, 4.0, 5.0]),
+    pa.array([True, False, True, True, False])
+    ], schema=pa.schema([("a", pa.float32()), ("b", pa.bool_())]),
 )
 
 pyarrow.orc.write_table(table, "test.orc")

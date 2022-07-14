@@ -3,16 +3,7 @@ use std::{
     io::{Read, Seek, SeekFrom},
 };
 
-use orc_format::{proto::stream::Kind, read, Error};
-
-/*
-unsigned char reverse(unsigned char b) {
-   b = (b & 0xF0) >> 4 | (b & 0x0F) << 4;
-   b = (b & 0xCC) >> 2 | (b & 0x33) << 2;
-   b = (b & 0xAA) >> 1 | (b & 0x55) << 1;
-   return b;
-}
-*/
+use orc_format::{proto::stream::Kind, read, read::Stripe, Error};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum EncodingTypeV2 {
@@ -72,76 +63,59 @@ fn deserialize_f32(stream: &[u8]) -> impl Iterator<Item = f32> + '_ {
         .map(|chunk| f32::from_le_bytes(chunk.try_into().unwrap()))
 }
 
-fn deserialize_f64(stream: &[u8]) -> impl Iterator<Item = f64> + '_ {
-    stream
-        .chunks_exact(8)
-        .map(|chunk| f64::from_le_bytes(chunk.try_into().unwrap()))
+fn deserialize_f32_array(stripe: &Stripe, column: usize) -> Result<(Vec<bool>, Vec<f32>), Error> {
+    let num_of_rows = stripe.number_of_rows();
+    let data = stripe.get_bytes(column, Kind::Present)?;
+
+    let iter = read::decode::BooleanRleIter::new(data, num_of_rows);
+    let validity = iter.collect::<Result<Vec<_>, Error>>()?;
+
+    let data = stripe.get_bytes(column, Kind::Data)?;
+
+    let valid_values = deserialize_f32(data).collect::<Vec<_>>();
+    Ok((validity, valid_values))
+}
+
+fn deserialize_bool(stream: &[u8]) -> impl Iterator<Item = Result<bool, Error>> + '_ {
+    read::decode::BooleanRleIter::new(stream, usize::MAX)
+}
+
+fn deserialize_bool_array(stripe: &Stripe, column: usize) -> Result<(Vec<bool>, Vec<bool>), Error> {
+    let num_of_rows = stripe.number_of_rows();
+    let data = stripe.get_bytes(column, Kind::Present)?;
+
+    let iter = read::decode::BooleanRleIter::new(data, num_of_rows);
+    let validity = iter.collect::<Result<Vec<_>, Error>>()?;
+
+    let data = stripe.get_bytes(column, Kind::Data)?;
+
+    let valid_values = deserialize_bool(data).collect::<Result<Vec<_>, Error>>()?;
+    Ok((validity, valid_values))
 }
 
 #[test]
-fn read_schema() {
+fn read_schema() -> Result<(), Error> {
     let mut f = File::open(&"test.orc").expect("no file found");
 
-    let (ps, footer, metadata) = read::read_metadata(&mut f).unwrap();
+    let (ps, footer, metadata) = read::read_metadata(&mut f)?;
 
-    println!("{:#?}", footer);
-    println!("{:#?}", metadata);
+    println!("{:#?}", footer.types);
 
     for stripe_info in footer.stripes {
         let a = stripe_info.offset();
         f.seek(SeekFrom::Start(a)).unwrap();
-        println!("{:?}", stripe_info);
-        println!("{:?}", stripe_info.index_length());
-        println!("{:?}", stripe_info.data_length());
-        println!("{:?}", stripe_info.footer_length());
 
         let len =
             stripe_info.index_length() + stripe_info.data_length() + stripe_info.footer_length();
         let mut stripe = vec![0; len as usize];
         f.read_exact(&mut stripe).unwrap();
-        println!("{stripe:?}");
 
-        //let stripe = read::read_stripe_footer(&buffer).unwrap();
-        let footer_offset = (stripe_info.index_length() + stripe_info.data_length()) as usize;
-        let stripe_footer =
-            read::deserialize_stripe_footer(&stripe[footer_offset..], ps.compression()).unwrap();
-        println!("{:#?}", stripe_footer);
+        let stripe = Stripe::try_new(&stripe, stripe_info, ps.compression())?;
 
-        let offsets: Vec<u64> = stripe_footer.streams.iter().fold(vec![0], |mut acc, v| {
-            acc.push(acc.last().copied().unwrap() + v.length());
-            acc
-        });
+        deserialize_f32_array(&stripe, 1)?;
 
-        let num_of_rows = stripe_info.number_of_rows() as usize;
-
-        println!("{offsets:?}");
-
-        let get_bytes = |column: u32, kind: Kind| -> &[u8] {
-            stripe_footer
-                .streams
-                .iter()
-                .zip(offsets.windows(2))
-                .filter(|(stream, _)| stream.column == Some(column) && stream.kind() == kind)
-                .map(|(stream, offsets)| {
-                    let start = offsets[0];
-                    debug_assert_eq!(offsets[1] - offsets[0], stream.length());
-                    let length = stream.length();
-                    println!("{start} {length}");
-                    &stripe[start as usize..(start + length) as usize]
-                })
-                .next()
-                .unwrap()
-        };
-
-        let data = get_bytes(1, Kind::Present);
-
-        let iter = read::decode::BooleanRleIter::new(data, num_of_rows);
-        let validity = iter.collect::<Result<Vec<_>, Error>>().unwrap();
-
-        let data = get_bytes(1, Kind::Data);
-
-        let valid_values = deserialize_f32(data).collect::<Vec<_>>();
-        println!("{:?}", validity);
-        println!("{:?}", valid_values);
+        deserialize_bool_array(&stripe, 2)?;
     }
+
+    Ok(())
 }
