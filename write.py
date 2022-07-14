@@ -9,12 +9,12 @@ pyarrow.orc.write_table(table, "test.orc")
 
 import pyorc
 
-output = open("test.orc", "wb")
-writer = pyorc.Writer(output, "struct<a:int>")
-writer.write((0,))
-writer.write((1,))
-writer.write((3,))
-writer.close()
+#output = open("test.orc", "wb")
+#writer = pyorc.Writer(output, "struct<a:int>")
+#writer.write((0,))
+#writer.write((1,))
+#writer.write((3,))
+#writer.close()
 
 example = open("test.orc", "rb")
 reader = pyorc.Reader(example)

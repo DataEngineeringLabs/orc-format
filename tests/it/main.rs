@@ -38,7 +38,6 @@ fn read_schema() {
                 .streams
                 .iter()
                 .zip(lengths.windows(2))
-                //.map(|(stream, length)| length)
                 .filter(|(stream, _)| {
                     stream.column == Some(column) && stream.kind() != Kind::RowIndex
                 })
@@ -54,6 +53,7 @@ fn read_schema() {
         let a = get_bytes(1);
 
         let data = &stripe[a[0].0 as usize..a[0].0 as usize + a[0].1 as usize];
-        println!("{data:?}");
+        let header = data[0];
+        println!("{header:b}");
     }
 }

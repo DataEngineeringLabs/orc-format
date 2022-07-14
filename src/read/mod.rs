@@ -2,7 +2,7 @@ use std::io::{Read, Seek, SeekFrom};
 
 use prost::Message;
 
-use crate::proto::{Footer, Metadata, PostScript, StripeFooter};
+use crate::proto::{CompressionKind, Footer, Metadata, PostScript, StripeFooter};
 
 const DEFAULT_FOOTER_SIZE: u64 = 16 * 1024;
 
@@ -46,11 +46,13 @@ where
     let postscript = PostScript::decode(&tail_bytes[tail_bytes.len() - postscript_len..])?;
     tail_bytes.truncate(tail_bytes.len() - postscript_len);
 
+    println!("{postscript:?}");
+
     // next is the footer
     let footer_length = postscript.footer_length.unwrap() as usize; // todo: throw error
 
     let footer = &tail_bytes[tail_bytes.len() - footer_length..];
-    let footer = deserialize_footer(footer)?;
+    let footer = deserialize_footer(footer, postscript.compression())?;
     tail_bytes.truncate(tail_bytes.len() - footer_length);
 
     // finally the metadata
@@ -61,37 +63,68 @@ where
     Ok((postscript, footer, metadata))
 }
 
+fn decode_header(bytes: &[u8]) -> (bool, usize) {
+    // 5 uncompressed = [0x0b, 0x00, 0x00] = [0b1011, 0, 0]
+    // let bytes = &[0b1011, 0, 0, 0];
+    // 100_000 compressed = [0x40, 0x0d, 0x03] = [0b01000000, 0b00001101, 0b00000011]
+    //let bytes = &[0b01000000, 0b00001101, 0b00000011, 0];
+    let mut a: [u8; 3] = (&bytes[..3]).try_into().unwrap();
+    let mut a = [0, a[0], a[1], a[2]];
+    println!(
+        "{:#010b} {:#010b} {:#010b} {:#010b}",
+        a[0], a[1], a[2], a[3]
+    );
+    let length = u32::from_le_bytes(a);
+    println!("length: {length}");
+    let is_original = a[0] & 1 == 1;
+    let length = (length >> 1) as usize;
+    println!("{:#032b}", length);
+    println!("{:#032b}", 1u32);
+    dbg!(is_original);
+    dbg!(length);
+    (is_original, length)
+}
+
 macro_rules! deserialize {
-    ($bytes:expr, $op:ident) => {{
+    ($bytes:expr, $compression:expr, $op:ident) => {{
         let bytes = $bytes;
-        let mut a: [u8; 4] = (&bytes[..4]).try_into().unwrap();
-        a[3] = 0;
-        let a = u32::from_le_bytes(a);
-        let is_original = a % 2 == 1;
-        let _length = (a / 2) as usize;
+        let compression = $compression;
+        let (is_original, _length) = decode_header(bytes);
+        let bytes = &bytes[3..];
+
+        println!("is_original: {is_original:?}");
+        println!("_length: {_length:?}");
 
         if is_original {
-            Ok($op(&bytes[3..])?)
+            Ok($op(bytes)?)
         } else {
-            let mut gz = flate2::read::DeflateDecoder::new(&bytes[3..]);
-            let mut bytes = Vec::<u8>::new();
-            gz.read_to_end(&mut bytes).unwrap();
-            Ok($op(&bytes)?)
+            match compression {
+                CompressionKind::None => Ok($op(bytes)?),
+                _ => {
+                    let mut gz = flate2::read::DeflateDecoder::new(bytes);
+                    let mut bytes = Vec::<u8>::new();
+                    gz.read_to_end(&mut bytes).unwrap();
+                    Ok($op(&bytes)?)
+                }
+            }
         }
     }};
 }
 
-fn deserialize_footer(footer: &[u8]) -> Result<Footer, std::io::Error> {
+fn deserialize_footer(
+    footer: &[u8],
+    compression: CompressionKind,
+) -> Result<Footer, std::io::Error> {
     let f = Footer::decode;
-    deserialize!(footer, f)
+    deserialize!(footer, compression, f)
 }
 
 fn deserialize_footer_metadata(bytes: &[u8]) -> Result<Metadata, std::io::Error> {
     let f = Metadata::decode;
-    deserialize!(bytes, f)
+    deserialize!(bytes, CompressionKind::None, f)
 }
 
 pub fn deserialize_stripe_footer(bytes: &[u8]) -> Result<StripeFooter, std::io::Error> {
     let f = StripeFooter::decode;
-    deserialize!(bytes, f)
+    deserialize!(bytes, CompressionKind::None, f)
 }
