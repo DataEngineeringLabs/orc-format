@@ -46,8 +46,6 @@ where
     let postscript = PostScript::decode(&tail_bytes[tail_bytes.len() - postscript_len..])?;
     tail_bytes.truncate(tail_bytes.len() - postscript_len);
 
-    println!("{postscript:?}");
-
     // next is the footer
     let footer_length = postscript.footer_length.unwrap() as usize; // todo: throw error
 
@@ -58,30 +56,22 @@ where
     // finally the metadata
     let metadata_length = postscript.metadata_length.unwrap() as usize; // todo: throw error
     let metadata = &tail_bytes[tail_bytes.len() - metadata_length..];
-    let metadata = deserialize_footer_metadata(metadata)?;
+    let metadata = deserialize_footer_metadata(metadata, postscript.compression())?;
 
     Ok((postscript, footer, metadata))
 }
 
 fn decode_header(bytes: &[u8]) -> (bool, usize) {
-    // 5 uncompressed = [0x0b, 0x00, 0x00] = [0b1011, 0, 0]
-    // let bytes = &[0b1011, 0, 0, 0];
-    // 100_000 compressed = [0x40, 0x0d, 0x03] = [0b01000000, 0b00001101, 0b00000011]
-    //let bytes = &[0b01000000, 0b00001101, 0b00000011, 0];
-    let mut a: [u8; 3] = (&bytes[..3]).try_into().unwrap();
-    let mut a = [0, a[0], a[1], a[2]];
+    let a: [u8; 3] = (&bytes[..3]).try_into().unwrap();
+    let a = [0, a[0], a[1], a[2]];
     println!(
         "{:#010b} {:#010b} {:#010b} {:#010b}",
         a[0], a[1], a[2], a[3]
     );
     let length = u32::from_le_bytes(a);
-    println!("length: {length}");
-    let is_original = a[0] & 1 == 1;
-    let length = (length >> 1) as usize;
-    println!("{:#032b}", length);
-    println!("{:#032b}", 1u32);
-    dbg!(is_original);
-    dbg!(length);
+    let is_original = a[1] & 1 == 1;
+    let length = (length >> (8 + 1)) as usize;
+
     (is_original, length)
 }
 
@@ -89,24 +79,21 @@ macro_rules! deserialize {
     ($bytes:expr, $compression:expr, $op:ident) => {{
         let bytes = $bytes;
         let compression = $compression;
-        let (is_original, _length) = decode_header(bytes);
-        let bytes = &bytes[3..];
 
-        println!("is_original: {is_original:?}");
-        println!("_length: {_length:?}");
-
-        if is_original {
-            Ok($op(bytes)?)
-        } else {
-            match compression {
-                CompressionKind::None => Ok($op(bytes)?),
-                _ => {
-                    let mut gz = flate2::read::DeflateDecoder::new(bytes);
-                    let mut bytes = Vec::<u8>::new();
-                    gz.read_to_end(&mut bytes).unwrap();
-                    Ok($op(&bytes)?)
+        match compression {
+            CompressionKind::None => Ok($op(bytes)?),
+            CompressionKind::Zlib => {
+                let (is_original, _length) = decode_header(bytes);
+                let bytes = &bytes[3..];
+                if is_original {
+                    return Ok($op(bytes)?);
                 }
+                let mut gz = flate2::read::DeflateDecoder::new(bytes);
+                let mut bytes = Vec::<u8>::new();
+                gz.read_to_end(&mut bytes).unwrap();
+                Ok($op(&bytes)?)
             }
+            _ => todo!(),
         }
     }};
 }
@@ -119,12 +106,43 @@ fn deserialize_footer(
     deserialize!(footer, compression, f)
 }
 
-fn deserialize_footer_metadata(bytes: &[u8]) -> Result<Metadata, std::io::Error> {
+fn deserialize_footer_metadata(
+    bytes: &[u8],
+    compression: CompressionKind,
+) -> Result<Metadata, std::io::Error> {
     let f = Metadata::decode;
-    deserialize!(bytes, CompressionKind::None, f)
+    deserialize!(bytes, compression, f)
 }
 
-pub fn deserialize_stripe_footer(bytes: &[u8]) -> Result<StripeFooter, std::io::Error> {
+pub fn deserialize_stripe_footer(
+    bytes: &[u8],
+    compression: CompressionKind,
+) -> Result<StripeFooter, std::io::Error> {
     let f = StripeFooter::decode;
-    deserialize!(bytes, CompressionKind::None, f)
+    deserialize!(bytes, compression, f)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn decode_uncompressed() {
+        // 5 uncompressed = [0x0b, 0x00, 0x00] = [0b1011, 0, 0]
+        let bytes = &[0b1011, 0, 0, 0];
+
+        let (is_original, length) = decode_header(bytes);
+        assert!(is_original);
+        assert_eq!(length, 5);
+    }
+
+    #[test]
+    fn decode_compressed() {
+        // 100_000 compressed = [0x40, 0x0d, 0x03] = [0b01000000, 0b00001101, 0b00000011]
+        let bytes = &[0b01000000, 0b00001101, 0b00000011, 0];
+
+        let (is_original, length) = decode_header(bytes);
+        assert!(!is_original);
+        assert_eq!(length, 100_000);
+    }
 }
