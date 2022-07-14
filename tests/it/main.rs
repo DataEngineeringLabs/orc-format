@@ -3,7 +3,16 @@ use std::{
     io::{Read, Seek, SeekFrom},
 };
 
-use orc_format::{proto::stream::Kind, read};
+use orc_format::{proto::stream::Kind, read, Error};
+
+/*
+unsigned char reverse(unsigned char b) {
+   b = (b & 0xF0) >> 4 | (b & 0x0F) << 4;
+   b = (b & 0xCC) >> 2 | (b & 0x33) << 2;
+   b = (b & 0xAA) >> 1 | (b & 0x55) << 1;
+   return b;
+}
+*/
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum EncodingTypeV2 {
@@ -125,29 +134,11 @@ fn read_schema() {
         };
 
         let data = get_bytes(1, Kind::Present);
-        let header = data[0];
-        let data = &data[1..];
-        let header = i8::from_le_bytes([header]);
-        let is_literal = header < 0;
-        let validity = if is_literal {
-            let length = -header;
-            let (literals, data) = data.split_at(length as usize);
-            literals
-                .iter()
-                .flat_map(|x| {
-                    (0..8u8).map(|i| {
-                        let mask = 128u8 >> i;
-                        *x & mask == mask
-                    })
-                })
-                .take(num_of_rows)
-                .collect::<Vec<_>>()
-        } else {
-            todo!()
-        };
+
+        let iter = read::decode::BooleanRleIter::new(data, num_of_rows);
+        let validity = iter.collect::<Result<Vec<_>, Error>>().unwrap();
 
         let data = get_bytes(1, Kind::Data);
-        println!("{data:?}");
 
         let valid_values = deserialize_f32(data).collect::<Vec<_>>();
         println!("{:?}", validity);

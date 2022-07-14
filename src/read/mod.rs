@@ -6,6 +6,8 @@ use crate::proto::{CompressionKind, Footer, Metadata, PostScript, StripeFooter};
 
 const DEFAULT_FOOTER_SIZE: u64 = 16 * 1024;
 
+pub mod decode;
+
 // see (unstable) Seek::stream_len
 fn stream_len(seek: &mut impl Seek) -> std::result::Result<u64, std::io::Error> {
     let old_pos = seek.seek(SeekFrom::Current(0))?;
