@@ -1,2 +1,2 @@
-mod proto;
+pub mod proto;
 pub mod read;

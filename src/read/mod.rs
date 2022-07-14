@@ -2,7 +2,7 @@ use std::io::{Read, Seek, SeekFrom};
 
 use prost::Message;
 
-use crate::proto::{Footer, Metadata, PostScript};
+use crate::proto::{Footer, Metadata, PostScript, StripeFooter};
 
 const DEFAULT_FOOTER_SIZE: u64 = 16 * 1024;
 
@@ -50,47 +50,48 @@ where
     let footer_length = postscript.footer_length.unwrap() as usize; // todo: throw error
 
     let footer = &tail_bytes[tail_bytes.len() - footer_length..];
-    let footer = read_footer(footer)?;
+    let footer = deserialize_footer(footer)?;
     tail_bytes.truncate(tail_bytes.len() - footer_length);
 
     // finally the metadata
     let metadata_length = postscript.metadata_length.unwrap() as usize; // todo: throw error
     let metadata = &tail_bytes[tail_bytes.len() - metadata_length..];
-    let metadata = read_footer_metadata(metadata)?;
+    let metadata = deserialize_footer_metadata(metadata)?;
 
     Ok((postscript, footer, metadata))
 }
 
-fn read_footer(footer: &[u8]) -> Result<Footer, std::io::Error> {
-    let mut a: [u8; 4] = (&footer[..4]).try_into().unwrap();
-    a[3] = 0;
-    let a = u32::from_le_bytes(a);
-    let is_original = a % 2 == 1;
-    let _length = (a / 2) as usize;
+macro_rules! deserialize {
+    ($bytes:expr, $op:ident) => {{
+        let bytes = $bytes;
+        let mut a: [u8; 4] = (&bytes[..4]).try_into().unwrap();
+        a[3] = 0;
+        let a = u32::from_le_bytes(a);
+        let is_original = a % 2 == 1;
+        let _length = (a / 2) as usize;
 
-    if is_original {
-        Ok(Footer::decode(&footer[3..])?)
-    } else {
-        let mut gz = flate2::read::DeflateDecoder::new(&footer[3..]);
-        let mut footer = Vec::<u8>::new();
-        gz.read_to_end(&mut footer).unwrap();
-        Ok(Footer::decode(&*footer)?)
-    }
+        if is_original {
+            Ok($op(&bytes[3..])?)
+        } else {
+            let mut gz = flate2::read::DeflateDecoder::new(&bytes[3..]);
+            let mut bytes = Vec::<u8>::new();
+            gz.read_to_end(&mut bytes).unwrap();
+            Ok($op(&bytes)?)
+        }
+    }};
 }
 
-fn read_footer_metadata(bytes: &[u8]) -> Result<Metadata, std::io::Error> {
-    let mut a: [u8; 4] = (&bytes[..4]).try_into().unwrap();
-    a[3] = 0;
-    let a = u32::from_le_bytes(a);
-    let is_original = a % 2 == 1;
-    let _length = (a / 2) as usize;
+fn deserialize_footer(footer: &[u8]) -> Result<Footer, std::io::Error> {
+    let f = Footer::decode;
+    deserialize!(footer, f)
+}
 
-    if is_original {
-        Ok(Metadata::decode(&bytes[3..])?)
-    } else {
-        let mut gz = flate2::read::DeflateDecoder::new(&bytes[3..]);
-        let mut bytes = Vec::<u8>::new();
-        gz.read_to_end(&mut bytes).unwrap();
-        Ok(Metadata::decode(&*bytes)?)
-    }
+fn deserialize_footer_metadata(bytes: &[u8]) -> Result<Metadata, std::io::Error> {
+    let f = Metadata::decode;
+    deserialize!(bytes, f)
+}
+
+pub fn deserialize_stripe_footer(bytes: &[u8]) -> Result<StripeFooter, std::io::Error> {
+    let f = StripeFooter::decode;
+    deserialize!(bytes, f)
 }
