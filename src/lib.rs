@@ -4,6 +4,7 @@ pub mod read;
 #[derive(Debug, Clone)]
 pub enum Error {
     OutOfSpec,
+    RleLiteralTooLarge,
 }
 
 impl From<prost::DecodeError> for Error {

@@ -1,32 +1,36 @@
 use crate::Error;
 
+#[derive(Debug, Copy, Clone, PartialEq)]
 pub enum BooleanRun<'a> {
     Run, // todo!
     Literals(&'a [u8]),
 }
 
-pub struct BooleanRleRunIter<'a> {
+pub struct RleRunIter<'a> {
     stream: &'a [u8],
 }
 
-impl<'a> BooleanRleRunIter<'a> {
+impl<'a> RleRunIter<'a> {
     pub fn new(stream: &'a [u8]) -> Self {
         Self { stream }
     }
 }
 
-impl<'a> Iterator for BooleanRleRunIter<'a> {
+impl<'a> Iterator for RleRunIter<'a> {
     type Item = Result<BooleanRun<'a>, Error>;
 
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
         let header = *self.stream.first()?;
+        println!("{:?}", self.stream);
         self.stream = &self.stream[1..];
         let header = i8::from_le_bytes([header]);
         if header < 0 {
             let length = (-header) as usize;
+            println!("{:?}", length);
+            println!("{:?}", self.stream);
             if length > self.stream.len() {
-                return Some(Err(Error::OutOfSpec));
+                return Some(Err(Error::RleLiteralTooLarge));
             }
             let (literals, remaining) = self.stream.split_at(length);
             self.stream = remaining;
@@ -38,7 +42,7 @@ impl<'a> Iterator for BooleanRleRunIter<'a> {
 }
 
 pub struct BooleanRleIter<'a> {
-    iter: BooleanRleRunIter<'a>,
+    iter: RleRunIter<'a>,
     current: Option<BooleanRun<'a>>,
     position: u8,
     remaining: usize,
@@ -47,7 +51,7 @@ pub struct BooleanRleIter<'a> {
 impl<'a> BooleanRleIter<'a> {
     pub fn new(stream: &'a [u8], length: usize) -> Self {
         Self {
-            iter: BooleanRleRunIter::new(stream),
+            iter: RleRunIter::new(stream),
             current: None,
             position: 0,
             remaining: length,

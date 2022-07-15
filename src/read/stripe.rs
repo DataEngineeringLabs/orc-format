@@ -1,10 +1,11 @@
 use crate::{
-    proto::{stream::Kind, CompressionKind, StripeFooter, StripeInformation},
+    proto::{stream::Kind, ColumnEncoding, CompressionKind, StripeFooter, StripeInformation},
     Error,
 };
 
 use super::deserialize_stripe_footer;
 
+#[derive(Debug)]
 pub struct Stripe<'a> {
     stripe: &'a [u8],
     information: StripeInformation,
@@ -40,7 +41,7 @@ impl<'a> Stripe<'a> {
             .streams
             .iter()
             .zip(self.offsets.windows(2))
-            .filter(|(stream, _)| stream.column == Some(column) && stream.kind() == kind)
+            .filter(|(stream, _)| stream.column() == column && stream.kind() == kind)
             .map(|(stream, offsets)| {
                 let start = offsets[0];
                 debug_assert_eq!(offsets[1] - offsets[0], stream.length());
@@ -50,6 +51,10 @@ impl<'a> Stripe<'a> {
             })
             .next()
             .ok_or(Error::OutOfSpec)
+    }
+
+    pub fn get_encoding(&self, column: usize) -> Result<&ColumnEncoding, Error> {
+        self.footer.columns.get(column).ok_or(Error::OutOfSpec)
     }
 
     pub fn number_of_rows(&self) -> usize {

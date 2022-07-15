@@ -3,7 +3,12 @@ use std::{
     io::{Read, Seek, SeekFrom},
 };
 
-use orc_format::{proto::stream::Kind, read, read::Stripe, Error};
+use orc_format::{
+    proto::{column_encoding::Kind as ColumnEncodingKind, stream::Kind, ColumnEncoding},
+    read,
+    read::Stripe,
+    Error,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum EncodingTypeV2 {
@@ -19,19 +24,14 @@ fn header_to_rle_v2_bit_width(header: u8) -> u8 {
 }
 
 fn header_to_rle_v2_short_repeated_bit_width(header: u8) -> u8 {
-    println!("{:#010b}", header);
     let header = header << 2; // remove first 2 bits
-    println!("{:#010b}", header & 0b11100000);
     let bit_width = header & 0b11100000;
     u8::from_le_bytes([bit_width])
 }
 
 fn header_to_rle_v2_short_repeated_count(header: u8) -> u8 {
-    println!("{:#010b}", header);
     let header = header << 5; // remove first 5 bits
     let count = header & 0b11100000;
-    println!("{:#010b}", count);
-    println!("{}", count);
     todo!()
 }
 
@@ -76,8 +76,11 @@ fn deserialize_f32_array(stripe: &Stripe, column: usize) -> Result<(Vec<bool>, V
     Ok((validity, valid_values))
 }
 
-fn deserialize_bool(stream: &[u8]) -> impl Iterator<Item = Result<bool, Error>> + '_ {
-    read::decode::BooleanRleIter::new(stream, usize::MAX)
+fn deserialize_bool(
+    stream: &[u8],
+    num_of_rows: usize,
+) -> impl Iterator<Item = Result<bool, Error>> + '_ {
+    read::decode::BooleanRleIter::new(stream, num_of_rows)
 }
 
 fn deserialize_bool_array(stripe: &Stripe, column: usize) -> Result<(Vec<bool>, Vec<bool>), Error> {
@@ -89,12 +92,40 @@ fn deserialize_bool_array(stripe: &Stripe, column: usize) -> Result<(Vec<bool>, 
 
     let data = stripe.get_bytes(column, Kind::Data)?;
 
-    let valid_values = deserialize_bool(data).collect::<Result<Vec<_>, Error>>()?;
+    let valid_values = deserialize_bool(data, num_of_rows).collect::<Result<Vec<_>, Error>>()?;
     Ok((validity, valid_values))
 }
 
+fn deserialize_string(values: &[u8], lengths: &[u8], num_of_rows: usize) -> Result<(), Error> {
+    let a = read::decode::RleRunIter::new(lengths).collect::<Result<Vec<_>, Error>>()?;
+    dbg!(a);
+    todo!()
+}
+
+fn deserialize_string_array(
+    stripe: &Stripe,
+    column: usize,
+) -> Result<(Vec<bool>, Vec<String>), Error> {
+    let num_of_rows = stripe.number_of_rows();
+
+    //let data = stripe.get_bytes(column, Kind::Present)?;
+    //let iter = read::decode::BooleanRleIter::new(data, num_of_rows);
+    //let validity = iter.collect::<Result<Vec<_>, Error>>()?;
+
+    let encoding = stripe.get_encoding(column)?;
+
+    let values = stripe.get_bytes(column, Kind::Data)?;
+
+    let lengths = stripe.get_bytes(column, Kind::Length)?;
+
+    assert_eq!(encoding.kind(), ColumnEncodingKind::DirectV2);
+
+    let valid_values = deserialize_string(values, lengths, num_of_rows)?;
+    todo!()
+}
+
 #[test]
-fn read_schema() -> Result<(), Error> {
+fn read_basics() -> Result<(), Error> {
     let mut f = File::open(&"test.orc").expect("no file found");
 
     let (ps, footer, metadata) = read::read_metadata(&mut f)?;
@@ -112,9 +143,17 @@ fn read_schema() -> Result<(), Error> {
 
         let stripe = Stripe::try_new(&stripe, stripe_info, ps.compression())?;
 
-        deserialize_f32_array(&stripe, 1)?;
+        /*
+        let (a, b) = deserialize_f32_array(&stripe, 1)?;
+        assert_eq!(a, vec![true; 5]);
+        assert_eq!(b, vec![1.0, 2.0, 3.0, 4.0, 5.0]);
 
-        deserialize_bool_array(&stripe, 2)?;
+        let (a, b) = deserialize_bool_array(&stripe, 2)?;
+        assert_eq!(a, vec![true, true, false, true, true]);
+        assert_eq!(b, vec![true, false, true, false, false]); // +1 element due to nulls
+         */
+
+        deserialize_string_array(&stripe, 3)?;
     }
 
     Ok(())

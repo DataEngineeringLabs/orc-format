@@ -1,23 +1,22 @@
 import pyarrow as pa
 import pyarrow.orc
 
-table = pa.Table.from_arrays(
-    [pa.array([1.0, 2.0, 3.0, 4.0, 5.0]),
-    pa.array([True, False, True, True, False])
-    ], schema=pa.schema([("a", pa.float32()), ("b", pa.bool_())]),
-)
-
-pyarrow.orc.write_table(table, "test.orc")
+data = {
+    "a": [1.0, 2.0, 3.0, 4.0, 5.0],
+    "b": [True, False, None, True, False],
+    "c": ["a", "cc", None, "ddd", "eee"],
+}
 
 
 def _write():
     import pyorc
 
     output = open("test.orc", "wb")
-    writer = pyorc.Writer(output, "struct<a:float>", compression = pyorc.CompressionKind.NONE)
+    writer = pyorc.Writer(
+        output, "struct<a:float,b:boolean,c:string>", compression=pyorc.CompressionKind.NONE
+    )
     for x in range(5):
-        writer.write((1.0,))
-        writer.write((None,))
+        writer.write((data["a"][x], data["b"][x], data["c"][x]))
     writer.close()
 
     example = open("test.orc", "rb")
@@ -28,4 +27,5 @@ def _write():
     print(stripe2.bytes_offset)
     print(stripe2.bytes_length)
 
-    assert list(reader) == [(1.0,), (None,)]*5
+
+_write()

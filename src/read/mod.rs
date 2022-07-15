@@ -70,10 +70,6 @@ where
 fn decode_header(bytes: &[u8]) -> (bool, usize) {
     let a: [u8; 3] = (&bytes[..3]).try_into().unwrap();
     let a = [0, a[0], a[1], a[2]];
-    println!(
-        "{:#010b} {:#010b} {:#010b} {:#010b}",
-        a[0], a[1], a[2], a[3]
-    );
     let length = u32::from_le_bytes(a);
     let is_original = a[1] & 1 == 1;
     let length = (length >> (8 + 1)) as usize;
