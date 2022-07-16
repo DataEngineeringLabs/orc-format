@@ -4,7 +4,7 @@ import pyarrow.orc
 data = {
     "a": [1.0, 2.0, 3.0, 4.0, 5.0],
     "b": [True, False, None, True, False],
-    "c": ["a", "cc", None, "ddd", "eee"],
+    "c": ["a", "cccccc", None, "ddd", "ee"],
 }
 
 

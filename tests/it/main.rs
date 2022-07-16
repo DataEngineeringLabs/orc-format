@@ -35,7 +35,83 @@ fn header_to_rle_v2_short_repeated_count(header: u8) -> u8 {
     todo!()
 }
 
-fn integers(data: &[u8]) {
+fn rle_v2_direct_bit_width(value: u8) -> u8 {
+    match value {
+        0 => 1,
+        1 => 2,
+        3 => 4,
+        7 => 8,
+        15 => 16,
+        23 => 24,
+        27 => 32,
+        28 => 40,
+        29 => 48,
+        30 => 56,
+        31 => 64,
+        other => todo!("{other}"),
+    }
+}
+
+fn header_to_rle_v2_direct_bit_width(header: u8) -> u8 {
+    let bit_width = (header & 0b00111110) >> 1;
+    rle_v2_direct_bit_width(bit_width)
+}
+
+fn header_to_rle_v2_direct_length(header: u8, header1: u8) -> u16 {
+    let bit = header & 0b00000001;
+    let r = u16::from_be_bytes([bit, header1]);
+    1 + r
+}
+
+fn direct_u64(data: &[u8]) -> impl Iterator<Item = u64> + '_ {
+    let header = data[0];
+    let bit_width = header_to_rle_v2_direct_bit_width(header);
+    dbg!(bit_width);
+
+    let length = header_to_rle_v2_direct_length(header, data[1]);
+    dbg!(length);
+    let data = &data[2..];
+
+    let remaining = ((bit_width as usize) * (length as usize) + 7) / 8;
+    let data = &data[..remaining];
+    dbg!(data);
+
+    let bytes = ((bit_width + 7) / 8) as usize;
+
+    let packs = (remaining + 7) / 8;
+    println!("{packs}");
+    for pack in 0..packs {
+        let mut pack = [0u8; 8];
+        pack[..data.len()].copy_from_slice(data);
+        let a = u64::from_le_bytes(pack);
+        println!("{:#066b}", a);
+
+        let mut pack = [0u64; 8];
+        for item in 0..8 {
+            let mask = pack[0] = a & mask;
+        }
+    }
+
+    let remainder = [0u8; 8];
+    (0..length as usize).map(move |i| {
+        // todo: apply carry-over from remainder;
+        let data = &data[i * bytes..(i + 1) * bytes];
+        let mut a = [0u8; 8];
+        a[8 - bytes..].copy_from_slice(data);
+        u64::from_be_bytes(a)
+    })
+}
+
+#[test]
+fn direct() {
+    // [23713, 43806, 57005, 48879]
+    let data: [u8; 10] = [0x5e, 0x03, 0x5c, 0xa1, 0xab, 0x1e, 0xde, 0xad, 0xbe, 0xef];
+
+    let a = direct_u64(&data).collect::<Vec<_>>();
+    assert_eq!(a, vec![23713, 43806, 57005, 48879]);
+}
+
+fn integers(data: &[u8]) -> impl Iterator<Item = u64> + '_ {
     // INTEGERS
     // 10, 39, 16
     // header: 0b00001010
@@ -51,10 +127,8 @@ fn integers(data: &[u8]) {
         (false, false) => EncodingTypeV2::ShortRepeat,
     };
 
-    assert_eq!(encoding, EncodingTypeV2::ShortRepeat);
-    let bit_width = header_to_rle_v2_short_repeated_bit_width(header);
-    dbg!(bit_width);
-    header_to_rle_v2_short_repeated_count(header);
+    assert_eq!(encoding, EncodingTypeV2::Direct);
+    direct_u64(data)
 }
 
 fn deserialize_f32(stream: &[u8]) -> impl Iterator<Item = f32> + '_ {
@@ -97,8 +171,8 @@ fn deserialize_bool_array(stripe: &Stripe, column: usize) -> Result<(Vec<bool>, 
 }
 
 fn deserialize_string(values: &[u8], lengths: &[u8], num_of_rows: usize) -> Result<(), Error> {
-    let a = read::decode::RleRunIter::new(lengths).collect::<Result<Vec<_>, Error>>()?;
-    dbg!(a);
+    println!("{lengths:?}");
+    integers(lengths).collect::<Vec<_>>();
     todo!()
 }
 

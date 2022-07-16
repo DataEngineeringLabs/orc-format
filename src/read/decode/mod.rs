@@ -22,13 +22,10 @@ impl<'a> Iterator for RleRunIter<'a> {
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
         let header = *self.stream.first()?;
-        println!("{:?}", self.stream);
         self.stream = &self.stream[1..];
         let header = i8::from_le_bytes([header]);
         if header < 0 {
             let length = (-header) as usize;
-            println!("{:?}", length);
-            println!("{:?}", self.stream);
             if length > self.stream.len() {
                 return Some(Err(Error::RleLiteralTooLarge));
             }
