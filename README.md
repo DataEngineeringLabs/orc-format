@@ -10,9 +10,9 @@ It currently reads:
 * metadata (proto files)
 * stripes
 * booleans
-* strings (non-dictionary encoded)
-* integers (non-dictionary encoded)
-* floats (non-dictionary encoded)
+* strings
+* integers
+* floats
 
 ## Run tests
 
