@@ -63,43 +63,36 @@ fn header_to_rle_v2_direct_length(header: u8, header1: u8) -> u16 {
     1 + r
 }
 
-fn direct_u64(data: &[u8]) -> impl Iterator<Item = u64> + '_ {
+#[inline]
+fn get_bits(bytes: &[u8], num_bits: u8, index: usize) -> u64 {
+    let num_bits = num_bits as usize;
+    let start = num_bits * index; // in bits
+    let length = num_bits; // in bits
+    let byte_start = start / 8;
+    let byte_end = (start + length + 7) / 8;
+    // copy swapped
+    let slice = &bytes[byte_start..byte_end];
+    let mut a = [0u8; 8];
+    for (i, item) in slice.iter().rev().enumerate() {
+        a[i] = *item;
+    }
+    let bits = u64::from_le_bytes(a);
+    let offset = num_bits % 8 - start % 8;
+    let bits = (bits >> offset) & (!0u64 >> (64 - num_bits));
+    bits
+}
+
+fn direct_u64(data: &[u8], num_rows: usize) -> impl Iterator<Item = u64> + '_ {
     let header = data[0];
     let bit_width = header_to_rle_v2_direct_bit_width(header);
-    dbg!(bit_width);
 
     let length = header_to_rle_v2_direct_length(header, data[1]);
-    dbg!(length);
     let data = &data[2..];
 
     let remaining = ((bit_width as usize) * (length as usize) + 7) / 8;
     let data = &data[..remaining];
-    dbg!(data);
 
-    let bytes = ((bit_width + 7) / 8) as usize;
-
-    let packs = (remaining + 7) / 8;
-    println!("{packs}");
-    for pack in 0..packs {
-        let mut pack = [0u8; 8];
-        pack[..data.len()].copy_from_slice(data);
-        let a = u64::from_le_bytes(pack);
-        println!("{:#066b}", a);
-
-        let mut pack = [0u64; 8];
-        for item in 0..8 {
-            let mask = pack[0] = a & mask;
-        }
-    }
-
-    let remainder = [0u8; 8];
-    (0..length as usize).map(move |i| {
-        // todo: apply carry-over from remainder;
-        let data = &data[i * bytes..(i + 1) * bytes];
-        let mut a = [0u8; 8];
-        a[8 - bytes..].copy_from_slice(data);
-        u64::from_be_bytes(a)
-    })
+    (0..num_rows).map(move |x| get_bits(data, bit_width, x))
 }
 
 #[test]
@@ -107,11 +100,11 @@ fn direct() {
     // [23713, 43806, 57005, 48879]
     let data: [u8; 10] = [0x5e, 0x03, 0x5c, 0xa1, 0xab, 0x1e, 0xde, 0xad, 0xbe, 0xef];
 
-    let a = direct_u64(&data).collect::<Vec<_>>();
+    let a = direct_u64(&data, 4).collect::<Vec<_>>();
     assert_eq!(a, vec![23713, 43806, 57005, 48879]);
 }
 
-fn integers(data: &[u8]) -> impl Iterator<Item = u64> + '_ {
+fn integers(data: &[u8], num_rows: usize) -> impl Iterator<Item = u64> + '_ {
     // INTEGERS
     // 10, 39, 16
     // header: 0b00001010
@@ -128,7 +121,7 @@ fn integers(data: &[u8]) -> impl Iterator<Item = u64> + '_ {
     };
 
     assert_eq!(encoding, EncodingTypeV2::Direct);
-    direct_u64(data)
+    direct_u64(data, num_rows)
 }
 
 fn deserialize_f32(stream: &[u8]) -> impl Iterator<Item = f32> + '_ {
@@ -164,38 +157,49 @@ fn deserialize_bool_array(stripe: &Stripe, column: usize) -> Result<(Vec<bool>, 
     let iter = read::decode::BooleanRleIter::new(data, num_of_rows);
     let validity = iter.collect::<Result<Vec<_>, Error>>()?;
 
+    let num_valids = validity.iter().filter(|x| **x).count();
+
     let data = stripe.get_bytes(column, Kind::Data)?;
 
-    let valid_values = deserialize_bool(data, num_of_rows).collect::<Result<Vec<_>, Error>>()?;
+    let valid_values = deserialize_bool(data, num_valids).collect::<Result<Vec<_>, Error>>()?;
     Ok((validity, valid_values))
 }
 
-fn deserialize_string(values: &[u8], lengths: &[u8], num_of_rows: usize) -> Result<(), Error> {
-    println!("{lengths:?}");
-    integers(lengths).collect::<Vec<_>>();
-    todo!()
+fn deserialize_string<'a>(
+    mut values: &'a [u8],
+    lengths: &'a [u8],
+    num_valids: usize,
+) -> impl Iterator<Item = Result<&'a str, Error>> + 'a {
+    integers(lengths, num_valids).map(move |length| {
+        let (item, remaining) = values.split_at(length as usize);
+        values = remaining;
+        std::str::from_utf8(item).map_err(|_| Error::OutOfSpec)
+    })
 }
 
-fn deserialize_string_array(
-    stripe: &Stripe,
+fn deserialize_string_array<'a>(
+    stripe: &'a Stripe,
     column: usize,
-) -> Result<(Vec<bool>, Vec<String>), Error> {
+) -> Result<(Vec<bool>, Vec<&'a str>), Error> {
     let num_of_rows = stripe.number_of_rows();
 
-    //let data = stripe.get_bytes(column, Kind::Present)?;
-    //let iter = read::decode::BooleanRleIter::new(data, num_of_rows);
-    //let validity = iter.collect::<Result<Vec<_>, Error>>()?;
+    let data = stripe.get_bytes(column, Kind::Present)?;
+    let iter = read::decode::BooleanRleIter::new(data, num_of_rows);
+    let validity = iter.collect::<Result<Vec<_>, Error>>()?;
 
+    let num_valids = validity.iter().filter(|x| **x).count();
+
+    // todo: generalize to other encodings
     let encoding = stripe.get_encoding(column)?;
+    assert_eq!(encoding.kind(), ColumnEncodingKind::DirectV2);
 
     let values = stripe.get_bytes(column, Kind::Data)?;
 
     let lengths = stripe.get_bytes(column, Kind::Length)?;
 
-    assert_eq!(encoding.kind(), ColumnEncodingKind::DirectV2);
-
-    let valid_values = deserialize_string(values, lengths, num_of_rows)?;
-    todo!()
+    let valid_values =
+        deserialize_string(values, lengths, num_valids).collect::<Result<Vec<_>, Error>>()?;
+    Ok((validity, valid_values))
 }
 
 #[test]
@@ -203,8 +207,6 @@ fn read_basics() -> Result<(), Error> {
     let mut f = File::open(&"test.orc").expect("no file found");
 
     let (ps, footer, metadata) = read::read_metadata(&mut f)?;
-
-    println!("{:#?}", footer.types);
 
     for stripe_info in footer.stripes {
         let a = stripe_info.offset();
@@ -217,17 +219,17 @@ fn read_basics() -> Result<(), Error> {
 
         let stripe = Stripe::try_new(&stripe, stripe_info, ps.compression())?;
 
-        /*
         let (a, b) = deserialize_f32_array(&stripe, 1)?;
         assert_eq!(a, vec![true; 5]);
         assert_eq!(b, vec![1.0, 2.0, 3.0, 4.0, 5.0]);
 
         let (a, b) = deserialize_bool_array(&stripe, 2)?;
         assert_eq!(a, vec![true, true, false, true, true]);
-        assert_eq!(b, vec![true, false, true, false, false]); // +1 element due to nulls
-         */
+        assert_eq!(b, vec![true, false, true, false]);
 
-        deserialize_string_array(&stripe, 3)?;
+        let (a, b) = deserialize_string_array(&stripe, 3)?;
+        assert_eq!(a, vec![true, true, false, true, true]);
+        assert_eq!(b, vec!["a", "cccccc", "ddd", "ee"]);
     }
 
     Ok(())
