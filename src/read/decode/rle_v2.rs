@@ -101,6 +101,9 @@ fn signed_varint<R: std::io::Read>(reader: &mut R) -> Result<i64, Error> {
 
 #[inline]
 fn unpack(bytes: &[u8], num_bits: u8, index: usize) -> u64 {
+    if num_bits == 0 {
+        return 0;
+    };
     let num_bits = num_bits as usize;
     let start = num_bits * index; // in bits
     let length = num_bits; // in bits
@@ -232,6 +235,8 @@ pub fn unsigned(
         // 00... = 0
         (false, false) => EncodingTypeV2::ShortRepeat,
     };
+
+    println!("{:?}", encoding);
 
     Ok(match encoding {
         EncodingTypeV2::Direct => IteratorEnum::Direct(direct_u64(data)),

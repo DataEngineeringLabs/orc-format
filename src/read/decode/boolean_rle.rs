@@ -77,7 +77,7 @@ impl<'a> Iterator for BooleanIter<'a> {
                     } else {
                         self.remaining -= 1;
                     }
-                    if self.position == 7 {
+                    if self.position == 8 {
                         if repetitions == 0 {
                             self.current = None;
                         } else {
@@ -97,7 +97,7 @@ impl<'a> Iterator for BooleanIter<'a> {
                     } else {
                         self.remaining -= 1;
                     }
-                    if self.position == 7 {
+                    if self.position == 8 {
                         if bytes.len() == 1 {
                             self.current = None;
                         } else {

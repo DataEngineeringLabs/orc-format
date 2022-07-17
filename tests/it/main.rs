@@ -257,3 +257,20 @@ fn read_boolean_long() -> Result<(), Error> {
     assert_eq!(b, vec![true; 32]);
     Ok(())
 }
+
+#[test]
+fn read_string_long() -> Result<(), Error> {
+    let stripe = get_test_stripe("string_long.orc")?;
+
+    let (a, b) = deserialize_str_array(&stripe, 1)?;
+    assert_eq!(a, vec![true; 64]);
+    assert_eq!(
+        b,
+        vec!["abcd", "efgh"]
+            .into_iter()
+            .cycle()
+            .take(64)
+            .collect::<Vec<_>>()
+    );
+    Ok(())
+}

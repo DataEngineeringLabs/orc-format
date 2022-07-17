@@ -41,3 +41,9 @@ data_boolean = {
 }
 
 _write("struct<long:boolean>", data_boolean, "long_bool.orc")
+
+data_dict = {
+    "dict": ["abcd", "efgh"] * 32,
+}
+
+_write("struct<dict:string>", data_dict, "string_long.orc")
