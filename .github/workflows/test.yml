@@ -1,0 +1,25 @@
+name: Test
+
+on: [push, pull_request]
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - uses: Swatinem/rust-cache@v1
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+      - name: Setup ORC files
+        run: |
+          apt update && apt install python3-pip python3-venv -y -q
+          python3 -m venv venv
+          source venv/bin/activate
+          pip install pip --upgrade
+          pip install pyorc
+          python write.py
+          deactivate
+      - name: test
+        run: cargo test

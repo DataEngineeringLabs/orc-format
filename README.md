@@ -1,8 +1,18 @@
 # WIP to read Apache ORC from Rust
 
+[![test](https://github.com/jorgecarleitao/orc-rs/actions/workflows/test.yml/badge.svg)](https://github.com/jorgecarleitao/orc-rs/actions/workflows/test.yml)
+[![codecov](https://codecov.io/gh/jorgecarleitao/orc-rs/branch/main/graph/badge.svg?token=AgyTF60R3D)](https://codecov.io/gh/jorgecarleitao/orc-rs)
+
 This repo contains minimal dependencies and generated code from proto to read Apache ORC.
 
-Currently it only reads the file footer. Next to come.
+It currently reads:
+
+* metadata (proto files)
+* stripes
+* booleans
+* strings (non-dictionary encoded)
+* integers (non-dictionary encoded)
+* floats (non-dictionary encoded)
 
 ## Run tests
 

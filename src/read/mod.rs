@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 use std::io::{Read, Seek, SeekFrom};
 
 use prost::Message;
