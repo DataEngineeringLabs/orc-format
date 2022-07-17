@@ -16,11 +16,12 @@ data = {
 }
 
 
-def _write(schema: str, data, file_name: str):
+def _write(schema: str, data, file_name: str, dict_key_size_threshold=0.0):
     output = open(file_name, "wb")
     writer = pyorc.Writer(
         output,
         schema,
+        dict_key_size_threshold=dict_key_size_threshold,
         compression=pyorc.CompressionKind.NONE,
     )
     num_rows = len(list(data.values())[0])
@@ -47,3 +48,9 @@ data_dict = {
 }
 
 _write("struct<dict:string>", data_dict, "string_long.orc")
+
+data_dict = {
+    "dict": ["abc", "efgh"] * 32,
+}
+
+_write("struct<dict:string>", data_dict, "string_dict.orc", dict_key_size_threshold=0.1)

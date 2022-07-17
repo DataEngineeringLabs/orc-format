@@ -88,6 +88,35 @@ fn deserialize_str<'a>(
     })
 }
 
+fn deserialize_str_dict_array(
+    stripe: &Stripe,
+    column: usize,
+) -> Result<
+    IteratorEnum<
+        impl Iterator<Item = &str> + '_,
+        impl Iterator<Item = &str> + '_,
+        impl Iterator<Item = &str> + '_,
+    >,
+    Error,
+> {
+    let values = stripe.get_bytes(column, Kind::DictionaryData)?;
+    let lengths = stripe.get_bytes(column, Kind::Length)?;
+    let indices = stripe.get_bytes(column, Kind::Data)?;
+    let values = match deserialize_str(values, lengths)? {
+        IteratorEnum::Direct(values) => values.collect::<Result<Vec<_>, Error>>()?,
+        IteratorEnum::Delta(values) => values.collect::<Result<Vec<_>, Error>>()?,
+        IteratorEnum::ShortRepeat(values) => values.collect::<Result<Vec<_>, Error>>()?,
+    };
+
+    let f = move |x| values[x as usize];
+
+    Ok(match read::decode::v2_unsigned(indices)? {
+        IteratorEnum::Direct(values) => IteratorEnum::Direct(values.map(f)),
+        IteratorEnum::Delta(values) => IteratorEnum::Delta(values.map(f)),
+        IteratorEnum::ShortRepeat(values) => IteratorEnum::ShortRepeat(values.map(f)),
+    })
+}
+
 fn deserialize_str_array(stripe: &Stripe, column: usize) -> Result<(Vec<bool>, Vec<&str>), Error> {
     let num_of_rows = stripe.number_of_rows();
 
@@ -97,16 +126,25 @@ fn deserialize_str_array(stripe: &Stripe, column: usize) -> Result<(Vec<bool>, V
 
     // todo: generalize to other encodings
     let encoding = stripe.get_encoding(column)?;
-    assert_eq!(encoding.kind(), ColumnEncodingKind::DirectV2);
+    let valid_values = match encoding.kind() {
+        ColumnEncodingKind::DirectV2 => {
+            let values = stripe.get_bytes(column, Kind::Data)?;
 
-    let values = stripe.get_bytes(column, Kind::Data)?;
+            let lengths = stripe.get_bytes(column, Kind::Length)?;
 
-    let lengths = stripe.get_bytes(column, Kind::Length)?;
+            match deserialize_str(values, lengths)? {
+                IteratorEnum::Direct(values) => values.collect::<Result<Vec<_>, Error>>()?,
+                IteratorEnum::Delta(values) => values.collect::<Result<Vec<_>, Error>>()?,
+                IteratorEnum::ShortRepeat(values) => values.collect::<Result<Vec<_>, Error>>()?,
+            }
+        }
 
-    let valid_values = match deserialize_str(values, lengths)? {
-        IteratorEnum::Direct(values) => values.collect::<Result<Vec<_>, Error>>()?,
-        IteratorEnum::Delta(values) => values.collect::<Result<Vec<_>, Error>>()?,
-        IteratorEnum::ShortRepeat(values) => values.collect::<Result<Vec<_>, Error>>()?,
+        ColumnEncodingKind::DictionaryV2 => match deserialize_str_dict_array(stripe, column)? {
+            IteratorEnum::Direct(values) => values.collect::<Vec<_>>(),
+            IteratorEnum::Delta(values) => values.collect::<Vec<_>>(),
+            IteratorEnum::ShortRepeat(values) => values.collect::<Vec<_>>(),
+        },
+        other => todo!("{other:?}"),
     };
     Ok((validity, valid_values))
 }
@@ -267,6 +305,23 @@ fn read_string_long() -> Result<(), Error> {
     assert_eq!(
         b,
         vec!["abcd", "efgh"]
+            .into_iter()
+            .cycle()
+            .take(64)
+            .collect::<Vec<_>>()
+    );
+    Ok(())
+}
+
+#[test]
+fn read_string_dict() -> Result<(), Error> {
+    let stripe = get_test_stripe("string_dict.orc")?;
+
+    let (a, b) = deserialize_str_array(&stripe, 1)?;
+    assert_eq!(a, vec![true; 64]);
+    assert_eq!(
+        b,
+        vec!["abc", "efgh"]
             .into_iter()
             .cycle()
             .take(64)
