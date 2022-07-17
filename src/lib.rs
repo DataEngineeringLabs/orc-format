@@ -1,3 +1,5 @@
+use proto::stream::Kind;
+
 pub mod proto;
 pub mod read;
 
@@ -5,6 +7,8 @@ pub mod read;
 pub enum Error {
     OutOfSpec,
     RleLiteralTooLarge,
+    InvalidUtf8,
+    InvalidColumn(u32, Kind),
 }
 
 impl From<prost::DecodeError> for Error {

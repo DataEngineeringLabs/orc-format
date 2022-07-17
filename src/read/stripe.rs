@@ -6,16 +6,16 @@ use crate::{
 use super::deserialize_stripe_footer;
 
 #[derive(Debug)]
-pub struct Stripe<'a> {
-    stripe: &'a [u8],
+pub struct Stripe {
+    stripe: Vec<u8>,
     information: StripeInformation,
     footer: StripeFooter,
     offsets: Vec<u64>,
 }
 
-impl<'a> Stripe<'a> {
+impl Stripe {
     pub fn try_new(
-        stripe: &'a [u8],
+        stripe: Vec<u8>,
         information: StripeInformation,
         compression: CompressionKind,
     ) -> Result<Self, Error> {
@@ -46,11 +46,10 @@ impl<'a> Stripe<'a> {
                 let start = offsets[0];
                 debug_assert_eq!(offsets[1] - offsets[0], stream.length());
                 let length = stream.length();
-                println!("{start} {length}");
                 &self.stripe[start as usize..(start + length) as usize]
             })
             .next()
-            .ok_or(Error::OutOfSpec)
+            .ok_or(Error::InvalidColumn(column, kind))
     }
 
     pub fn get_encoding(&self, column: usize) -> Result<&ColumnEncoding, Error> {
@@ -59,5 +58,9 @@ impl<'a> Stripe<'a> {
 
     pub fn number_of_rows(&self) -> usize {
         self.information.number_of_rows() as usize
+    }
+
+    pub fn into_inner(self) -> Vec<u8> {
+        self.stripe
     }
 }
