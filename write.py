@@ -16,34 +16,28 @@ data = {
 }
 
 
-def _write():
-    output = open("test.orc", "wb")
+def _write(schema: str, data, file_name: str):
+    output = open(file_name, "wb")
     writer = pyorc.Writer(
         output,
-        "struct<a:float,b:boolean,str_direct:string,d:string,e:string,f:string,int_short_repeated:int,int_neg_short_repeated:int,int_delta:int,int_neg_delta:int,int_direct:int,int_neg_direct:int>",
+        schema,
         compression=pyorc.CompressionKind.NONE,
     )
-    for x in range(5):
-        row = (
-            data["a"][x],
-            data["b"][x],
-            data["str_direct"][x],
-            data["d"][x],
-            data["e"][x],
-            data["f"][x],
-            data["int_short_repeated"][x],
-            data["int_neg_short_repeated"][x],
-            data["int_delta"][x],
-            data["int_neg_delta"][x],
-            data["int_direct"][x],
-            data["int_neg_direct"][x],
-        )
+    num_rows = len(list(data.values())[0])
+    for x in range(num_rows):
+        row = tuple(values[x] for values in data.values())
         writer.write(row)
     writer.close()
 
-    example = open("test.orc", "rb")
+    example = open(file_name, "rb")
     reader = pyorc.Reader(example)
     print(list(reader))
 
 
-_write()
+_write("struct<a:float,b:boolean,str_direct:string,d:string,e:string,f:string,int_short_repeated:int,int_neg_short_repeated:int,int_delta:int,int_neg_delta:int,int_direct:int,int_neg_direct:int>", data, "test.orc")
+
+data_boolean = {
+    "long": [True] * 32,
+}
+
+_write("struct<long:boolean>", data_boolean, "long_bool.orc")

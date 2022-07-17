@@ -111,8 +111,8 @@ fn deserialize_str_array(stripe: &Stripe, column: usize) -> Result<(Vec<bool>, V
     Ok((validity, valid_values))
 }
 
-fn get_test_stripe() -> Result<Stripe, Error> {
-    let mut f = File::open(&"test.orc").expect("no file found");
+fn get_test_stripe(path: &str) -> Result<Stripe, Error> {
+    let mut f = File::open(path).expect("no file found");
 
     let (ps, mut footer, _metadata) = read::read_metadata(&mut f)?;
 
@@ -130,7 +130,7 @@ fn get_test_stripe() -> Result<Stripe, Error> {
 
 #[test]
 fn read_bool() -> Result<(), Error> {
-    let stripe = get_test_stripe()?;
+    let stripe = get_test_stripe("test.orc")?;
 
     let (a, b) = deserialize_bool_array(&stripe, 2)?;
     assert_eq!(a, vec![true, true, false, true, true]);
@@ -140,7 +140,7 @@ fn read_bool() -> Result<(), Error> {
 
 #[test]
 fn read_str_direct() -> Result<(), Error> {
-    let stripe = get_test_stripe()?;
+    let stripe = get_test_stripe("test.orc")?;
 
     let (a, b) = deserialize_str_array(&stripe, 3)?;
     assert_eq!(a, vec![true, true, false, true, true]);
@@ -150,7 +150,7 @@ fn read_str_direct() -> Result<(), Error> {
 
 #[test]
 fn read_str_delta_plus() -> Result<(), Error> {
-    let stripe = get_test_stripe()?;
+    let stripe = get_test_stripe("test.orc")?;
 
     let (a, b) = deserialize_str_array(&stripe, 4)?;
     assert_eq!(a, vec![true, true, false, true, true]);
@@ -160,7 +160,7 @@ fn read_str_delta_plus() -> Result<(), Error> {
 
 #[test]
 fn read_str_delta_minus() -> Result<(), Error> {
-    let stripe = get_test_stripe()?;
+    let stripe = get_test_stripe("test.orc")?;
 
     let (a, b) = deserialize_str_array(&stripe, 5)?;
     assert_eq!(a, vec![true, true, false, true, true]);
@@ -170,7 +170,7 @@ fn read_str_delta_minus() -> Result<(), Error> {
 
 #[test]
 fn read_str_short_repeat() -> Result<(), Error> {
-    let stripe = get_test_stripe()?;
+    let stripe = get_test_stripe("test.orc")?;
 
     let (a, b) = deserialize_str_array(&stripe, 6)?;
     assert_eq!(a, vec![true, true, false, true, true]);
@@ -180,7 +180,7 @@ fn read_str_short_repeat() -> Result<(), Error> {
 
 #[test]
 fn read_f32() -> Result<(), Error> {
-    let stripe = get_test_stripe()?;
+    let stripe = get_test_stripe("test.orc")?;
 
     let (a, b) = deserialize_f32_array(&stripe, 1)?;
     assert_eq!(a, vec![true, true, false, true, true]);
@@ -190,7 +190,7 @@ fn read_f32() -> Result<(), Error> {
 
 #[test]
 fn read_int_short_repeated() -> Result<(), Error> {
-    let stripe = get_test_stripe()?;
+    let stripe = get_test_stripe("test.orc")?;
 
     let (a, b) = deserialize_int_array(&stripe, 7)?;
     assert_eq!(a, vec![true, true, false, true, true]);
@@ -200,7 +200,7 @@ fn read_int_short_repeated() -> Result<(), Error> {
 
 #[test]
 fn read_int_neg_short_repeated() -> Result<(), Error> {
-    let stripe = get_test_stripe()?;
+    let stripe = get_test_stripe("test.orc")?;
 
     let (a, b) = deserialize_int_array(&stripe, 8)?;
     assert_eq!(a, vec![true, true, false, true, true]);
@@ -210,7 +210,7 @@ fn read_int_neg_short_repeated() -> Result<(), Error> {
 
 #[test]
 fn read_int_delta() -> Result<(), Error> {
-    let stripe = get_test_stripe()?;
+    let stripe = get_test_stripe("test.orc")?;
 
     let (a, b) = deserialize_int_array(&stripe, 9)?;
     assert_eq!(a, vec![true, true, false, true, true]);
@@ -220,7 +220,7 @@ fn read_int_delta() -> Result<(), Error> {
 
 #[test]
 fn read_int_neg_delta() -> Result<(), Error> {
-    let stripe = get_test_stripe()?;
+    let stripe = get_test_stripe("test.orc")?;
 
     let (a, b) = deserialize_int_array(&stripe, 10)?;
     assert_eq!(a, vec![true, true, false, true, true]);
@@ -230,7 +230,7 @@ fn read_int_neg_delta() -> Result<(), Error> {
 
 #[test]
 fn read_int_direct() -> Result<(), Error> {
-    let stripe = get_test_stripe()?;
+    let stripe = get_test_stripe("test.orc")?;
 
     let (a, b) = deserialize_int_array(&stripe, 11)?;
     assert_eq!(a, vec![true, true, false, true, true]);
@@ -240,10 +240,20 @@ fn read_int_direct() -> Result<(), Error> {
 
 #[test]
 fn read_int_neg_direct() -> Result<(), Error> {
-    let stripe = get_test_stripe()?;
+    let stripe = get_test_stripe("test.orc")?;
 
     let (a, b) = deserialize_int_array(&stripe, 11)?;
     assert_eq!(a, vec![true, true, false, true, true]);
     assert_eq!(b, vec![1, 6, 3, 2]);
+    Ok(())
+}
+
+#[test]
+fn read_boolean_long() -> Result<(), Error> {
+    let stripe = get_test_stripe("long_bool.orc")?;
+
+    let (a, b) = deserialize_bool_array(&stripe, 1)?;
+    assert_eq!(a, vec![true; 32]);
+    assert_eq!(b, vec![true; 32]);
     Ok(())
 }

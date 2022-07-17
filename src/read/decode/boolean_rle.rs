@@ -2,7 +2,7 @@ use crate::Error;
 
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub enum BooleanRun<'a> {
-    Run, // todo!
+    Run(u8, u8),
     Literals(&'a [u8]),
 }
 
@@ -33,7 +33,10 @@ impl<'a> Iterator for BooleanRleRunIter<'a> {
             self.stream = remaining;
             Some(Ok(BooleanRun::Literals(literals)))
         } else {
-            todo!()
+            let length = (header + 3) as u8;
+            let value = self.stream[0];
+            self.stream = &self.stream[1..];
+            Some(Ok(BooleanRun::Run(value, length)))
         }
     }
 }
@@ -63,7 +66,27 @@ impl<'a> Iterator for BooleanIter<'a> {
     fn next(&mut self) -> Option<Self::Item> {
         if let Some(run) = &self.current {
             match run {
-                BooleanRun::Run => todo!(),
+                BooleanRun::Run(value, repetitions) => {
+                    let repetitions = *repetitions;
+                    let mask = 128u8 >> self.position;
+                    let result = value & mask == mask;
+                    self.position += 1;
+                    if self.remaining == 0 {
+                        self.current = None;
+                        return None;
+                    } else {
+                        self.remaining -= 1;
+                    }
+                    if self.position == 7 {
+                        if repetitions == 0 {
+                            self.current = None;
+                        } else {
+                            self.current = Some(BooleanRun::Run(*value, repetitions - 1));
+                        }
+                        self.position = 0;
+                    }
+                    Some(Ok(result))
+                }
                 BooleanRun::Literals(bytes) => {
                     let mask = 128u8 >> self.position;
                     let result = bytes[0] & mask == mask;
