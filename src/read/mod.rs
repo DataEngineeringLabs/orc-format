@@ -9,6 +9,7 @@ use crate::proto::{CompressionKind, Footer, Metadata, PostScript, StripeFooter};
 use super::Error;
 
 pub mod decode;
+mod decompress;
 mod stripe;
 pub use stripe::Stripe;
 
@@ -69,81 +70,32 @@ where
     Ok((postscript, footer, metadata))
 }
 
-fn decode_header(bytes: &[u8]) -> (bool, usize) {
-    let a: [u8; 3] = (&bytes[..3]).try_into().unwrap();
-    let a = [0, a[0], a[1], a[2]];
-    let length = u32::from_le_bytes(a);
-    let is_original = a[1] & 1 == 1;
-    let length = (length >> (8 + 1)) as usize;
-
-    (is_original, length)
-}
-
-macro_rules! deserialize {
-    ($bytes:expr, $compression:expr, $op:ident) => {{
-        let bytes = $bytes;
-        let compression = $compression;
-
-        match compression {
-            CompressionKind::None => Ok($op(bytes)?),
-            CompressionKind::Zlib => {
-                let (is_original, _length) = decode_header(bytes);
-                let bytes = &bytes[3..];
-                if is_original {
-                    return Ok($op(bytes)?);
-                }
-                let mut gz = flate2::read::DeflateDecoder::new(bytes);
-                let mut bytes = Vec::<u8>::new();
-                gz.read_to_end(&mut bytes).unwrap();
-                Ok($op(&bytes)?)
-            }
-            _ => todo!(),
-        }
-    }};
-}
-
-fn deserialize_footer(footer: &[u8], compression: CompressionKind) -> Result<Footer, Error> {
-    let f = Footer::decode;
-    deserialize!(footer, compression, f)
+fn deserialize_footer(bytes: &[u8], compression: CompressionKind) -> Result<Footer, Error> {
+    Ok(Footer::decode(decompress::maybe_decompress(
+        bytes,
+        compression,
+        &mut vec![],
+    )?)?)
 }
 
 fn deserialize_footer_metadata(
     bytes: &[u8],
     compression: CompressionKind,
 ) -> Result<Metadata, Error> {
-    let f = Metadata::decode;
-    deserialize!(bytes, compression, f)
+    Ok(Metadata::decode(decompress::maybe_decompress(
+        bytes,
+        compression,
+        &mut vec![],
+    )?)?)
 }
 
 fn deserialize_stripe_footer(
     bytes: &[u8],
     compression: CompressionKind,
 ) -> Result<StripeFooter, Error> {
-    let f = StripeFooter::decode;
-    deserialize!(bytes, compression, f)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn decode_uncompressed() {
-        // 5 uncompressed = [0x0b, 0x00, 0x00] = [0b1011, 0, 0]
-        let bytes = &[0b1011, 0, 0, 0];
-
-        let (is_original, length) = decode_header(bytes);
-        assert!(is_original);
-        assert_eq!(length, 5);
-    }
-
-    #[test]
-    fn decode_compressed() {
-        // 100_000 compressed = [0x40, 0x0d, 0x03] = [0b01000000, 0b00001101, 0b00000011]
-        let bytes = &[0b01000000, 0b00001101, 0b00000011, 0];
-
-        let (is_original, length) = decode_header(bytes);
-        assert!(!is_original);
-        assert_eq!(length, 100_000);
-    }
+    Ok(StripeFooter::decode(decompress::maybe_decompress(
+        bytes,
+        compression,
+        &mut vec![],
+    )?)?)
 }

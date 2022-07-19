@@ -3,151 +3,10 @@ use std::{
     io::{Read, Seek, SeekFrom},
 };
 
-use orc_format::{
-    proto::{column_encoding::Kind as ColumnEncodingKind, stream::Kind},
-    read,
-    read::decode::{BooleanIter, IteratorEnum},
-    read::Stripe,
-    Error,
-};
+mod deserialize;
+use deserialize::*;
 
-fn deserialize_f32_array(stripe: &Stripe, column: usize) -> Result<(Vec<bool>, Vec<f32>), Error> {
-    let num_of_rows = stripe.number_of_rows();
-    let data = stripe.get_bytes(column, Kind::Present)?;
-
-    let iter = BooleanIter::new(data, num_of_rows);
-    let validity = iter.collect::<Result<Vec<_>, Error>>()?;
-
-    let data = stripe.get_bytes(column, Kind::Data)?;
-
-    let valid_values = read::decode::deserialize_f32(data).collect::<Vec<_>>();
-    Ok((validity, valid_values))
-}
-
-fn deserialize_int_array(stripe: &Stripe, column: usize) -> Result<(Vec<bool>, Vec<i64>), Error> {
-    let num_of_rows = stripe.number_of_rows();
-    let data = stripe.get_bytes(column, Kind::Present)?;
-
-    let iter = BooleanIter::new(data, num_of_rows);
-    let validity = iter.collect::<Result<Vec<_>, Error>>()?;
-
-    let data = stripe.get_bytes(column, Kind::Data)?;
-
-    let valid_values = match read::decode::v2_signed(data)? {
-        IteratorEnum::Direct(values) => values.collect::<Vec<_>>(),
-        IteratorEnum::Delta(values) => values.collect::<Vec<_>>(),
-        IteratorEnum::ShortRepeat(values) => values.collect::<Vec<_>>(),
-    };
-
-    Ok((validity, valid_values))
-}
-
-fn deserialize_bool(
-    stream: &[u8],
-    num_of_rows: usize,
-) -> impl Iterator<Item = Result<bool, Error>> + '_ {
-    BooleanIter::new(stream, num_of_rows)
-}
-
-fn deserialize_bool_array(stripe: &Stripe, column: usize) -> Result<(Vec<bool>, Vec<bool>), Error> {
-    let num_of_rows = stripe.number_of_rows();
-    let data = stripe.get_bytes(column, Kind::Present)?;
-
-    let iter = BooleanIter::new(data, num_of_rows);
-    let validity = iter.collect::<Result<Vec<_>, Error>>()?;
-
-    let num_valids = validity.iter().filter(|x| **x).count();
-
-    let data = stripe.get_bytes(column, Kind::Data)?;
-
-    let valid_values = deserialize_bool(data, num_valids).collect::<Result<Vec<_>, Error>>()?;
-    Ok((validity, valid_values))
-}
-
-fn deserialize_str<'a>(
-    mut values: &'a [u8],
-    lengths: &'a [u8],
-) -> Result<
-    IteratorEnum<
-        impl Iterator<Item = Result<&'a str, Error>> + 'a,
-        impl Iterator<Item = Result<&'a str, Error>> + 'a,
-        impl Iterator<Item = Result<&'a str, Error>> + 'a,
-    >,
-    Error,
-> {
-    let f = move |length| {
-        let (item, remaining) = values.split_at(length as usize);
-        values = remaining;
-        std::str::from_utf8(item).map_err(|_| Error::InvalidUtf8)
-    };
-
-    Ok(match read::decode::v2_unsigned(lengths)? {
-        IteratorEnum::Direct(values) => IteratorEnum::Direct(values.map(f)),
-        IteratorEnum::Delta(values) => IteratorEnum::Delta(values.map(f)),
-        IteratorEnum::ShortRepeat(values) => IteratorEnum::ShortRepeat(values.map(f)),
-    })
-}
-
-fn deserialize_str_dict_array(
-    stripe: &Stripe,
-    column: usize,
-) -> Result<
-    IteratorEnum<
-        impl Iterator<Item = &str> + '_,
-        impl Iterator<Item = &str> + '_,
-        impl Iterator<Item = &str> + '_,
-    >,
-    Error,
-> {
-    let values = stripe.get_bytes(column, Kind::DictionaryData)?;
-    let lengths = stripe.get_bytes(column, Kind::Length)?;
-    let indices = stripe.get_bytes(column, Kind::Data)?;
-    let values = match deserialize_str(values, lengths)? {
-        IteratorEnum::Direct(values) => values.collect::<Result<Vec<_>, Error>>()?,
-        IteratorEnum::Delta(values) => values.collect::<Result<Vec<_>, Error>>()?,
-        IteratorEnum::ShortRepeat(values) => values.collect::<Result<Vec<_>, Error>>()?,
-    };
-
-    let f = move |x| values[x as usize];
-
-    Ok(match read::decode::v2_unsigned(indices)? {
-        IteratorEnum::Direct(values) => IteratorEnum::Direct(values.map(f)),
-        IteratorEnum::Delta(values) => IteratorEnum::Delta(values.map(f)),
-        IteratorEnum::ShortRepeat(values) => IteratorEnum::ShortRepeat(values.map(f)),
-    })
-}
-
-fn deserialize_str_array(stripe: &Stripe, column: usize) -> Result<(Vec<bool>, Vec<&str>), Error> {
-    let num_of_rows = stripe.number_of_rows();
-
-    let data = stripe.get_bytes(column, Kind::Present)?;
-    let iter = BooleanIter::new(data, num_of_rows);
-    let validity = iter.collect::<Result<Vec<_>, Error>>()?;
-
-    // todo: generalize to other encodings
-    let encoding = stripe.get_encoding(column)?;
-    let valid_values = match encoding.kind() {
-        ColumnEncodingKind::DirectV2 => {
-            let values = stripe.get_bytes(column, Kind::Data)?;
-
-            let lengths = stripe.get_bytes(column, Kind::Length)?;
-
-            match deserialize_str(values, lengths)? {
-                IteratorEnum::Direct(values) => values.collect::<Result<Vec<_>, Error>>()?,
-                IteratorEnum::Delta(values) => values.collect::<Result<Vec<_>, Error>>()?,
-                IteratorEnum::ShortRepeat(values) => values.collect::<Result<Vec<_>, Error>>()?,
-            }
-        }
-
-        ColumnEncodingKind::DictionaryV2 => match deserialize_str_dict_array(stripe, column)? {
-            IteratorEnum::Direct(values) => values.collect::<Vec<_>>(),
-            IteratorEnum::Delta(values) => values.collect::<Vec<_>>(),
-            IteratorEnum::ShortRepeat(values) => values.collect::<Vec<_>>(),
-        },
-        other => todo!("{other:?}"),
-    };
-    Ok((validity, valid_values))
-}
+use orc_format::{read, read::Stripe, Error};
 
 fn get_test_stripe(path: &str) -> Result<Stripe, Error> {
     let mut f = File::open(path).expect("no file found");
@@ -162,6 +21,7 @@ fn get_test_stripe(path: &str) -> Result<Stripe, Error> {
     let len = stripe_info.index_length() + stripe_info.data_length() + stripe_info.footer_length();
     let mut stripe = vec![0; len as usize];
     f.read_exact(&mut stripe).unwrap();
+    println!("{:?}", ps.compression());
 
     Stripe::try_new(stripe, stripe_info, ps.compression())
 }
@@ -289,6 +149,16 @@ fn read_int_neg_direct() -> Result<(), Error> {
 #[test]
 fn read_boolean_long() -> Result<(), Error> {
     let stripe = get_test_stripe("long_bool.orc")?;
+
+    let (a, b) = deserialize_bool_array(&stripe, 1)?;
+    assert_eq!(a, vec![true; 32]);
+    assert_eq!(b, vec![true; 32]);
+    Ok(())
+}
+
+#[test]
+fn read_bool_compressed() -> Result<(), Error> {
+    let stripe = get_test_stripe("long_bool_gzip.orc")?;
 
     let (a, b) = deserialize_bool_array(&stripe, 1)?;
     assert_eq!(a, vec![true; 32]);

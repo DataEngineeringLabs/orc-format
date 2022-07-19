@@ -11,6 +11,7 @@ pub struct Stripe {
     information: StripeInformation,
     footer: StripeFooter,
     offsets: Vec<u64>,
+    compression: CompressionKind,
 }
 
 impl Stripe {
@@ -32,23 +33,30 @@ impl Stripe {
             information,
             footer,
             offsets,
+            compression,
         })
     }
 
-    pub fn get_bytes(&self, column: usize, kind: Kind) -> Result<&[u8], Error> {
+    pub fn get_bytes<'a>(
+        &'a self,
+        column: usize,
+        kind: Kind,
+        scratch: &'a mut Vec<u8>,
+    ) -> Result<&'a [u8], Error> {
         let column = column as u32;
         self.footer
             .streams
             .iter()
             .zip(self.offsets.windows(2))
-            .filter(|(stream, _)| stream.column() == column && stream.kind() == kind)
+            .find(|(stream, _)| stream.column() == column && stream.kind() == kind)
             .map(|(stream, offsets)| {
                 let start = offsets[0];
                 debug_assert_eq!(offsets[1] - offsets[0], stream.length());
                 let length = stream.length();
-                &self.stripe[start as usize..(start + length) as usize]
+                let data = &self.stripe[start as usize..(start + length) as usize];
+                super::decompress::maybe_decompress(data, self.compression, scratch)
             })
-            .next()
+            .transpose()?
             .ok_or(Error::InvalidColumn(column, kind))
     }
 

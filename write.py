@@ -16,13 +16,19 @@ data = {
 }
 
 
-def _write(schema: str, data, file_name: str, dict_key_size_threshold=0.0):
+def _write(
+    schema: str,
+    data,
+    file_name: str,
+    compression=pyorc.CompressionKind.NONE,
+    dict_key_size_threshold=0.0,
+):
     output = open(file_name, "wb")
     writer = pyorc.Writer(
         output,
         schema,
         dict_key_size_threshold=dict_key_size_threshold,
-        compression=pyorc.CompressionKind.NONE,
+        compression=compression,
     )
     num_rows = len(list(data.values())[0])
     for x in range(num_rows):
@@ -35,13 +41,19 @@ def _write(schema: str, data, file_name: str, dict_key_size_threshold=0.0):
     print(list(reader))
 
 
-_write("struct<a:float,b:boolean,str_direct:string,d:string,e:string,f:string,int_short_repeated:int,int_neg_short_repeated:int,int_delta:int,int_neg_delta:int,int_direct:int,int_neg_direct:int>", data, "test.orc")
+_write(
+    "struct<a:float,b:boolean,str_direct:string,d:string,e:string,f:string,int_short_repeated:int,int_neg_short_repeated:int,int_delta:int,int_neg_delta:int,int_direct:int,int_neg_direct:int>",
+    data,
+    "test.orc",
+)
 
 data_boolean = {
     "long": [True] * 32,
 }
 
 _write("struct<long:boolean>", data_boolean, "long_bool.orc")
+
+_write("struct<long:boolean>", data_boolean, "long_bool_gzip.orc", pyorc.CompressionKind.ZLIB)
 
 data_dict = {
     "dict": ["abcd", "efgh"] * 32,
