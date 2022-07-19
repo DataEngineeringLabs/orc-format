@@ -1,7 +1,7 @@
-# WIP to read Apache ORC from Rust
+# Read Apache ORC from Rust
 
-[![test](https://github.com/jorgecarleitao/orc-rs/actions/workflows/test.yml/badge.svg)](https://github.com/jorgecarleitao/orc-rs/actions/workflows/test.yml)
-[![codecov](https://codecov.io/gh/jorgecarleitao/orc-rs/branch/main/graph/badge.svg?token=AgyTF60R3D)](https://codecov.io/gh/jorgecarleitao/orc-rs)
+[![test](https://github.com/DataEngineeringLabs/orc-format/actions/workflows/test.yml/badge.svg)](https://github.com/DataEngineeringLabs/orc-format/actions/workflows/test.yml)
+[![codecov](https://codecov.io/gh/DataEngineeringLabs/orc-format/branch/main/graph/badge.svg?token=AgyTF60R3D)](https://codecov.io/gh/DataEngineeringLabs/orc-format)
 
 Read [Apache ORC](https://orc.apache.org/) in Rust.
 

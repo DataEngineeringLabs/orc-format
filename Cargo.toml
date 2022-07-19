@@ -1,6 +1,12 @@
 [package]
 name = "orc-format"
 version = "0.1.0"
+license = "MIT/Apache-2.0"
+description = "Unofficial implementation of Apache ORC spec in safe Rust"
+homepage = "https://github.com/DataEngineeringLabs/orc-format"
+repository = "https://github.com/DataEngineeringLabs/orc-format"
+authors = ["Jorge C. Leitao <jorgecarleitao@gmail.com>"]
+keywords = [ "orc", "analytics" ]
 edition = "2021"
 
 [dependencies]
