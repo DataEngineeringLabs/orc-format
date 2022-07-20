@@ -236,8 +236,6 @@ pub fn unsigned(
         (false, false) => EncodingTypeV2::ShortRepeat,
     };
 
-    println!("{:?}", encoding);
-
     Ok(match encoding {
         EncodingTypeV2::Direct => IteratorEnum::Direct(direct_u64(data)),
         EncodingTypeV2::Delta => IteratorEnum::Delta(delta_u64(data)?),

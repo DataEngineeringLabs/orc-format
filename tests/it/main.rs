@@ -21,7 +21,6 @@ fn get_test_stripe(path: &str) -> Result<Stripe, Error> {
     let len = stripe_info.index_length() + stripe_info.data_length() + stripe_info.footer_length();
     let mut stripe = vec![0; len as usize];
     f.read_exact(&mut stripe).unwrap();
-    println!("{:?}", ps.compression());
 
     Stripe::try_new(stripe, stripe_info, ps.compression())
 }
