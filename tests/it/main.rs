@@ -198,3 +198,69 @@ fn read_string_dict() -> Result<(), Error> {
     );
     Ok(())
 }
+
+#[test]
+fn read_string_dict_gzip() -> Result<(), Error> {
+    let stripe = get_test_stripe("string_dict_gzip.orc")?;
+
+    let (a, b) = deserialize_str_array(&stripe, 1)?;
+    assert_eq!(a, vec![true; 64]);
+    assert_eq!(
+        b,
+        vec!["abc", "efgh"]
+            .into_iter()
+            .cycle()
+            .take(64)
+            .collect::<Vec<_>>()
+    );
+    Ok(())
+}
+
+#[test]
+fn read_string_long_long() -> Result<(), Error> {
+    let stripe = get_test_stripe("string_long_long.orc")?;
+
+    let (a, b) = deserialize_str_array(&stripe, 1)?;
+    assert_eq!(a.len(), 10_000);
+    assert_eq!(a, vec![true; 10_000]);
+    assert_eq!(b.len(), 10_000);
+    assert_eq!(
+        b,
+        vec!["abcd", "efgh"]
+            .into_iter()
+            .cycle()
+            .take(10_000)
+            .collect::<Vec<_>>()
+    );
+    Ok(())
+}
+
+#[test]
+fn read_string_long_long_gzip() -> Result<(), Error> {
+    let stripe = get_test_stripe("string_long_long_gzip.orc")?;
+
+    let (a, b) = deserialize_str_array(&stripe, 1)?;
+    assert_eq!(a.len(), 10_000);
+    assert_eq!(a, vec![true; 10_000]);
+    assert_eq!(b.len(), 10_000);
+    assert_eq!(
+        b,
+        vec!["abcd", "efgh"]
+            .into_iter()
+            .cycle()
+            .take(10_000)
+            .collect::<Vec<_>>()
+    );
+    Ok(())
+}
+
+#[test]
+fn read_f32_long_long_gzip() -> Result<(), Error> {
+    let stripe = get_test_stripe("f32_long_long_gzip.orc")?;
+
+    let (a, b) = deserialize_f32_array(&stripe, 1)?;
+    assert_eq!(a.len(), 10_000);
+    assert_eq!(a, vec![true; 10_000]);
+    assert_eq!(b.len(), 10_000);
+    Ok(())
+}

@@ -36,10 +36,6 @@ def _write(
         writer.write(row)
     writer.close()
 
-    example = open(file_name, "rb")
-    reader = pyorc.Reader(example)
-    print(list(reader))
-
 
 _write(
     "struct<a:float,b:boolean,str_direct:string,d:string,e:string,f:string,int_short_repeated:int,int_neg_short_repeated:int,int_delta:int,int_neg_delta:int,int_direct:int,int_neg_direct:int>",
@@ -66,3 +62,18 @@ data_dict = {
 }
 
 _write("struct<dict:string>", data_dict, "string_dict.orc", dict_key_size_threshold=0.1)
+
+_write("struct<dict:string>", data_dict, "string_dict_gzip.orc", pyorc.CompressionKind.ZLIB)
+
+data_dict = {
+    "dict": ["abcd", "efgh"] * (10**4 // 2),
+}
+
+_write("struct<dict:string>", data_dict, "string_long_long.orc")
+_write("struct<dict:string>", data_dict, "string_long_long_gzip.orc", pyorc.CompressionKind.ZLIB)
+
+long_f32 = {
+    "dict": [10.1 + i for i in range(10**4)],
+}
+
+_write("struct<dict:float>", long_f32, "f32_long_long_gzip.orc", pyorc.CompressionKind.ZLIB)
