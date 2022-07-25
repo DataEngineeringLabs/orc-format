@@ -1,5 +1,7 @@
 use std::io::Read;
 
+use fallible_streaming_iterator::FallibleStreamingIterator;
+
 use crate::proto::CompressionKind;
 
 use super::super::Error;
@@ -40,6 +42,74 @@ pub fn maybe_decompress<'a>(
         CompressionKind::Zlib => decompress_zlib(maybe_compressed, scratch)?,
         _ => todo!(),
     })
+}
+
+enum State<'a> {
+    Original(&'a [u8]),
+    Compressed(Vec<u8>),
+}
+
+pub struct Decompressor<'a> {
+    stream: &'a [u8],
+    current: Option<State<'a>>, // when we have compression but the value is original
+    compression: CompressionKind,
+    scratch: Vec<u8>,
+}
+
+impl<'a> Decompressor<'a> {
+    pub fn new(stream: &'a [u8], compression: CompressionKind, scratch: Vec<u8>) -> Self {
+        Self {
+            stream,
+            current: None,
+            compression,
+            scratch,
+        }
+    }
+}
+
+impl<'a> FallibleStreamingIterator for Decompressor<'a> {
+    type Item = [u8];
+
+    type Error = Error;
+
+    #[inline]
+    fn advance(&mut self) -> Result<(), Self::Error> {
+        if self.stream.is_empty() {
+            return Ok(());
+        }
+        match self.compression {
+            CompressionKind::None => {
+                // todo: take stratch from current State::Compressed for re-use
+                self.current = Some(State::Original(self.stream));
+                self.stream = &[];
+            }
+            CompressionKind::Zlib => {
+                // todo: take stratch from current State::Compressed for re-use
+                let (is_original, length) = decode_header(self.stream);
+                self.stream = &self.stream[3..];
+                let (maybe_compressed, remaining) = self.stream.split_at(length);
+                self.stream = remaining;
+                if is_original {
+                    self.current = Some(State::Original(maybe_compressed));
+                } else {
+                    let mut gz = flate2::read::DeflateDecoder::new(maybe_compressed);
+                    self.scratch.clear();
+                    gz.read_to_end(&mut self.scratch).unwrap();
+                    self.current = Some(State::Compressed(std::mem::take(&mut self.scratch)));
+                }
+            }
+            _ => todo!(),
+        };
+        Ok(())
+    }
+
+    #[inline]
+    fn get(&self) -> Option<&Self::Item> {
+        self.current.as_ref().map(|x| match x {
+            State::Original(x) => *x,
+            State::Compressed(x) => x.as_ref(),
+        })
+    }
 }
 
 #[cfg(test)]
