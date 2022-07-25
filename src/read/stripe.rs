@@ -43,6 +43,7 @@ impl Stripe {
         kind: Kind,
         scratch: &'a mut Vec<u8>,
     ) -> Result<&'a [u8], Error> {
+        scratch.clear();
         let column = column as u32;
         self.footer
             .streams

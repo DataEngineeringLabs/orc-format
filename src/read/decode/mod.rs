@@ -2,9 +2,8 @@ mod boolean_rle;
 mod rle_v2;
 
 pub use boolean_rle::{BooleanIter, BooleanRleRunIter, BooleanRun};
-pub use rle_v2::signed as v2_signed;
-pub use rle_v2::unsigned as v2_unsigned;
 pub use rle_v2::IteratorEnum;
+pub use rle_v2::{SignedRleV2Iter, SignedRleV2Run, UnsignedRleV2Iter, UnsignedRleV2Run};
 
 pub fn deserialize_f32(stream: &[u8]) -> impl Iterator<Item = f32> + '_ {
     stream

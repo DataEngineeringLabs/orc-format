@@ -18,8 +18,10 @@ fn decompress_zlib<'a>(
     maybe_compressed: &'a [u8],
     scratch: &'a mut Vec<u8>,
 ) -> Result<&'a [u8], Error> {
-    let (is_original, _length) = decode_header(maybe_compressed);
-    let maybe_compressed = &maybe_compressed[3..];
+    let (is_original, length) = decode_header(maybe_compressed);
+    let maybe_compressed = maybe_compressed
+        .get(3..3 + length)
+        .ok_or(Error::OutOfSpec)?;
     if is_original {
         return Ok(maybe_compressed);
     }

@@ -2,7 +2,7 @@ use crate::Error;
 
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub enum BooleanRun<'a> {
-    Run(u8, u8),
+    Run(u8, u16),
     Literals(&'a [u8]),
 }
 
@@ -33,7 +33,7 @@ impl<'a> Iterator for BooleanRleRunIter<'a> {
             self.stream = remaining;
             Some(Ok(BooleanRun::Literals(literals)))
         } else {
-            let length = (header + 3) as u8;
+            let length = header as u16 + 3;
             let value = self.stream[0];
             self.stream = &self.stream[1..];
             Some(Ok(BooleanRun::Run(value, length)))

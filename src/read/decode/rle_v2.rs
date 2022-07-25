@@ -120,92 +120,239 @@ fn unpack(bytes: &[u8], num_bits: u8, index: usize) -> u64 {
     (bits >> offset) & (!0u64 >> (64 - num_bits))
 }
 
-fn short_repeat_u64(data: &[u8]) -> impl Iterator<Item = u64> + '_ {
-    let header = data[0];
-    let width = 1 + header_to_rle_v2_short_repeated_width(header);
-    let count = 3 + header_to_rle_v2_short_repeated_count(header);
-    let data = &data[1..1 + width as usize];
-    let mut a = [0u8; 8];
-    a[8 - data.len()..].copy_from_slice(data);
-    let value = u64::from_be_bytes(a);
-    std::iter::repeat(value).take(count as usize)
+pub struct UnsignedDirectRun<'a> {
+    data: &'a [u8],
+    bit_width: u8,
+    index: usize,
+    length: usize,
 }
 
-fn direct_u64(data: &[u8]) -> impl Iterator<Item = u64> + '_ {
-    let header = data[0];
-    let bit_width = header_to_rle_v2_direct_bit_width(header);
+impl<'a> UnsignedDirectRun<'a> {
+    #[inline]
+    fn new(data: &mut &'a [u8]) -> Self {
+        let header = data[0];
+        let bit_width = header_to_rle_v2_direct_bit_width(header);
 
-    let length = header_to_rle_v2_direct_length(header, data[1]);
-    let data = &data[2..];
+        let length = header_to_rle_v2_direct_length(header, data[1]);
+        let run_bytes = &data[2..];
 
-    let remaining = ((bit_width as usize) * (length as usize) + 7) / 8;
-    let data = &data[..remaining];
+        let remaining = ((bit_width as usize) * (length as usize) + 7) / 8;
+        let run = &run_bytes[..remaining];
+        *data = &run_bytes[remaining..];
 
-    (0..length as usize).map(move |x| unpack(data, bit_width, x))
-}
-
-fn delta_u64(data: &[u8]) -> Result<impl Iterator<Item = u64> + '_, Error> {
-    let header = data[0];
-    let bit_width = header_to_rle_v2_delta_bit_width(header);
-
-    let length = header_to_rle_v2_direct_length(header, data[1]);
-    let mut data = &data[2..];
-
-    let reader = &mut data;
-    let value = unsigned_varint(reader)?;
-    let delta_base = signed_varint(reader)?;
-    data = reader;
-
-    let deltas = (0..length as usize - 2).map(move |index| unpack(data, bit_width, index));
-
-    let mut base = value;
-    if delta_base > 0 {
-        base += delta_base as u64;
-    } else {
-        base -= (-delta_base) as u64;
+        Self {
+            data: run,
+            bit_width,
+            index: 0,
+            length: length as usize,
+        }
     }
-    Ok(std::iter::once(value)
-        .chain(std::iter::once(base))
-        .chain(deltas.map(move |delta| {
-            if delta_base > 0 {
-                base += delta;
-            } else {
-                base -= delta;
-            }
-            base
-        })))
 }
 
-fn delta_i64(data: &[u8]) -> Result<impl Iterator<Item = i64> + '_, Error> {
-    let header = data[0];
-    let bit_width = header_to_rle_v2_delta_bit_width(header);
+impl<'a> Iterator for UnsignedDirectRun<'a> {
+    type Item = u64;
 
-    let length = header_to_rle_v2_direct_length(header, data[1]);
-    let mut data = &data[2..];
-
-    let reader = &mut data;
-    let value = unsigned_varint(reader).map(zigzag)?;
-    let delta_base = signed_varint(reader)?;
-    data = reader;
-
-    let deltas = (0..length as usize - 2).map(move |index| unpack(data, bit_width, index));
-
-    let mut base = value;
-    if delta_base > 0 {
-        base += delta_base as i64;
-    } else {
-        base -= (-delta_base) as i64;
+    #[inline]
+    fn next(&mut self) -> Option<Self::Item> {
+        (self.index != self.length).then(|| {
+            let index = self.index;
+            self.index += 1;
+            unpack(self.data, self.bit_width, index)
+        })
     }
-    Ok(std::iter::once(value)
-        .chain(std::iter::once(base))
-        .chain(deltas.map(move |delta| {
-            if delta_base > 0 {
-                base += delta as i64;
-            } else {
-                base -= delta as i64;
+
+    #[inline]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let remaining = self.length - self.index;
+        (remaining, Some(remaining))
+    }
+}
+
+pub struct UnsignedDeltaRun<'a> {
+    encoded_deltas: &'a [u8],
+    bit_width: u8,
+    index: usize,
+    length: usize,
+    base: u64,
+    delta_base: i64,
+}
+
+impl<'a> UnsignedDeltaRun<'a> {
+    #[inline]
+    fn try_new(data: &mut &'a [u8]) -> Result<Self, Error> {
+        let header = data[0];
+        let bit_width = header_to_rle_v2_delta_bit_width(header);
+
+        let length = header_to_rle_v2_direct_length(header, data[1]);
+        *data = &data[2..];
+
+        let base = unsigned_varint(data)?;
+        let delta_base = signed_varint(data)?;
+        let remaining = ((length as usize - 2) * bit_width as usize + 7) / 8;
+        let encoded_deltas = &data[..remaining];
+        *data = &data[remaining..];
+
+        Ok(Self {
+            base,
+            encoded_deltas,
+            bit_width,
+            index: 0,
+            length: length as usize,
+            delta_base,
+        })
+    }
+}
+
+impl<'a> Iterator for UnsignedDeltaRun<'a> {
+    type Item = u64;
+
+    #[inline]
+    fn next(&mut self) -> Option<Self::Item> {
+        (self.index != self.length).then(|| {
+            let index = self.index;
+            if index == 0 {
+                self.index += 1;
+                return self.base;
             }
-            base
-        })))
+            if index == 1 {
+                self.index += 1;
+                if self.delta_base > 0 {
+                    self.base += self.delta_base as u64;
+                } else {
+                    self.base -= (-self.delta_base) as u64;
+                }
+                return self.base;
+            }
+            self.index += 1;
+            let delta = unpack(self.encoded_deltas, self.bit_width, index - 2);
+            if self.delta_base > 0 {
+                self.base += delta;
+            } else {
+                self.base -= delta;
+            }
+            self.base
+        })
+    }
+
+    #[inline]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let remaining = self.length - self.index;
+        (remaining, Some(remaining))
+    }
+}
+
+pub struct UnsignedShortRepeat {
+    value: u64,
+    remaining: usize,
+}
+
+impl UnsignedShortRepeat {
+    #[inline]
+    fn new(data: &mut &[u8]) -> Self {
+        let header = data[0];
+        let width = 1 + header_to_rle_v2_short_repeated_width(header);
+        let count = 3 + header_to_rle_v2_short_repeated_count(header);
+        let inner = &data[1..1 + width as usize];
+        *data = &data[1 + width as usize..];
+        let mut a = [0u8; 8];
+        a[8 - inner.len()..].copy_from_slice(inner);
+        let value = u64::from_be_bytes(a);
+
+        Self {
+            value,
+            remaining: count as usize,
+        }
+    }
+}
+
+impl Iterator for UnsignedShortRepeat {
+    type Item = u64;
+
+    #[inline]
+    fn next(&mut self) -> Option<Self::Item> {
+        (self.remaining != 0).then(|| {
+            self.remaining -= 1;
+            self.value
+        })
+    }
+
+    #[inline]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (self.remaining, Some(self.remaining))
+    }
+}
+
+pub struct SignedDeltaRun<'a> {
+    encoded_deltas: &'a [u8],
+    bit_width: u8,
+    index: usize,
+    length: usize,
+    base: i64,
+    delta_base: i64,
+}
+
+impl<'a> SignedDeltaRun<'a> {
+    #[inline]
+    fn try_new(data: &mut &'a [u8]) -> Result<Self, Error> {
+        let header = data[0];
+        let bit_width = header_to_rle_v2_delta_bit_width(header);
+
+        let length = header_to_rle_v2_direct_length(header, data[1]);
+        *data = &data[2..];
+
+        let base = unsigned_varint(data).map(zigzag)?;
+        let delta_base = signed_varint(data)?;
+        let remaining = ((length as usize - 2) * bit_width as usize + 7) / 8;
+        let encoded_deltas = &data[..remaining];
+        *data = &data[remaining..];
+
+        Ok(Self {
+            base,
+            encoded_deltas,
+            bit_width,
+            index: 0,
+            length: length as usize,
+            delta_base,
+        })
+    }
+}
+
+impl<'a> Iterator for SignedDeltaRun<'a> {
+    type Item = i64;
+
+    #[inline]
+    fn next(&mut self) -> Option<Self::Item> {
+        (self.index != self.length).then(|| {
+            let index = self.index;
+            if index == 0 {
+                self.index += 1;
+                return self.base;
+            }
+            if index == 1 {
+                self.index += 1;
+                if self.delta_base > 0 {
+                    self.base += self.delta_base as i64;
+                } else {
+                    self.base -= (-self.delta_base) as i64;
+                }
+                return self.base;
+            }
+            self.index += 1;
+            let delta = unpack(self.encoded_deltas, self.bit_width, index - 2);
+            if self.delta_base > 0 {
+                self.base += delta as i64;
+            } else {
+                self.base -= delta as i64;
+            }
+            self.base
+        })
+    }
+
+    #[inline]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let remaining = self.length - self.index;
+        (remaining, Some(remaining))
+    }
 }
 
 pub enum IteratorEnum<I, II, III> {
@@ -214,18 +361,9 @@ pub enum IteratorEnum<I, II, III> {
     ShortRepeat(III),
 }
 
-pub fn unsigned(
-    data: &[u8],
-) -> Result<
-    IteratorEnum<
-        impl Iterator<Item = u64> + '_,
-        impl Iterator<Item = u64> + '_,
-        impl Iterator<Item = u64> + '_,
-    >,
-    Error,
-> {
+fn run_encoding(data: &[u8]) -> EncodingTypeV2 {
     let header = data[0];
-    let encoding = match (header & 128 == 128, header & 64 == 64) {
+    match (header & 128 == 128, header & 64 == 64) {
         // 11... = 3
         (true, true) => EncodingTypeV2::Delta,
         // 10... = 2
@@ -234,31 +372,131 @@ pub fn unsigned(
         (false, true) => EncodingTypeV2::Direct,
         // 00... = 0
         (false, false) => EncodingTypeV2::ShortRepeat,
-    };
-
-    Ok(match encoding {
-        EncodingTypeV2::Direct => IteratorEnum::Direct(direct_u64(data)),
-        EncodingTypeV2::Delta => IteratorEnum::Delta(delta_u64(data)?),
-        EncodingTypeV2::ShortRepeat => IteratorEnum::ShortRepeat(short_repeat_u64(data)),
-        other => todo!("{other:?}"),
-    })
+    }
 }
 
-pub fn signed(
-    data: &[u8],
-) -> Result<
-    IteratorEnum<
-        impl Iterator<Item = i64> + '_,
-        impl Iterator<Item = i64> + '_,
-        impl Iterator<Item = i64> + '_,
-    >,
-    Error,
-> {
-    Ok(match unsigned(data)? {
-        IteratorEnum::Direct(values) => IteratorEnum::Direct(values.map(zigzag)),
-        IteratorEnum::Delta(_) => IteratorEnum::Delta(delta_i64(data)?),
-        IteratorEnum::ShortRepeat(values) => IteratorEnum::ShortRepeat(values.map(zigzag)),
-    })
+pub enum UnsignedRleV2Run<'a> {
+    Direct(UnsignedDirectRun<'a>),
+    Delta(UnsignedDeltaRun<'a>),
+    ShortRepeat(UnsignedShortRepeat),
+}
+
+impl<'a> UnsignedRleV2Run<'a> {
+    pub fn try_new(data: &mut &'a [u8]) -> Result<Self, Error> {
+        let encoding = run_encoding(data);
+
+        Ok(match encoding {
+            EncodingTypeV2::Direct => Self::Direct(UnsignedDirectRun::new(data)),
+            EncodingTypeV2::Delta => Self::Delta(UnsignedDeltaRun::try_new(data)?),
+            EncodingTypeV2::ShortRepeat => Self::ShortRepeat(UnsignedShortRepeat::new(data)),
+            other => todo!("{other:?}"),
+        })
+    }
+}
+
+pub struct UnsignedRleV2Iter<'a> {
+    data: &'a [u8],
+}
+
+impl<'a> UnsignedRleV2Iter<'a> {
+    pub fn new(data: &'a [u8]) -> Self {
+        Self { data }
+    }
+}
+
+impl<'a> Iterator for UnsignedRleV2Iter<'a> {
+    type Item = Result<UnsignedRleV2Run<'a>, Error>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        (!self.data.is_empty()).then(|| {
+            let stream = &mut self.data;
+            let run = UnsignedRleV2Run::try_new(stream);
+            self.data = *stream;
+            run
+        })
+    }
+}
+
+pub struct SignedDirectRun<'a>(UnsignedDirectRun<'a>);
+
+impl<'a> SignedDirectRun<'a> {
+    pub fn new(data: &mut &'a [u8]) -> Self {
+        Self(UnsignedDirectRun::new(data))
+    }
+}
+
+impl<'a> Iterator for SignedDirectRun<'a> {
+    type Item = i64;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.0.next().map(zigzag)
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.0.size_hint()
+    }
+}
+
+pub struct SignedShortRepeat(UnsignedShortRepeat);
+
+impl SignedShortRepeat {
+    pub fn new(data: &mut &[u8]) -> Self {
+        Self(UnsignedShortRepeat::new(data))
+    }
+}
+
+impl Iterator for SignedShortRepeat {
+    type Item = i64;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.0.next().map(zigzag)
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.0.size_hint()
+    }
+}
+
+pub enum SignedRleV2Run<'a> {
+    Direct(SignedDirectRun<'a>),
+    Delta(SignedDeltaRun<'a>),
+    ShortRepeat(SignedShortRepeat),
+}
+
+impl<'a> SignedRleV2Run<'a> {
+    pub fn try_new(data: &mut &'a [u8]) -> Result<Self, Error> {
+        let encoding = run_encoding(data);
+
+        Ok(match encoding {
+            EncodingTypeV2::Direct => Self::Direct(SignedDirectRun::new(data)),
+            EncodingTypeV2::Delta => Self::Delta(SignedDeltaRun::try_new(data)?),
+            EncodingTypeV2::ShortRepeat => Self::ShortRepeat(SignedShortRepeat::new(data)),
+            other => todo!("{other:?}"),
+        })
+    }
+}
+
+pub struct SignedRleV2Iter<'a> {
+    data: &'a [u8],
+}
+
+impl<'a> SignedRleV2Iter<'a> {
+    pub fn new(data: &'a [u8]) -> Self {
+        Self { data }
+    }
+}
+
+impl<'a> Iterator for SignedRleV2Iter<'a> {
+    type Item = Result<SignedRleV2Run<'a>, Error>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        (!self.data.is_empty()).then(|| {
+            let stream = &mut self.data;
+            let run = SignedRleV2Run::try_new(stream);
+            self.data = *stream;
+            run
+        })
+    }
 }
 
 #[cfg(test)]
@@ -283,8 +521,11 @@ mod test {
         // [10000, 10000, 10000, 10000, 10000]
         let data: [u8; 3] = [0x0a, 0x27, 0x10];
 
-        let a = short_repeat_u64(&data).collect::<Vec<_>>();
+        let data = &mut data.as_ref();
+
+        let a = UnsignedShortRepeat::new(data).collect::<Vec<_>>();
         assert_eq!(a, vec![10000, 10000, 10000, 10000, 10000]);
+        assert_eq!(data, &[]);
     }
 
     #[test]
@@ -292,8 +533,11 @@ mod test {
         // [23713, 43806, 57005, 48879]
         let data: [u8; 10] = [0x5e, 0x03, 0x5c, 0xa1, 0xab, 0x1e, 0xde, 0xad, 0xbe, 0xef];
 
-        let a = direct_u64(&data).collect::<Vec<_>>();
+        let data = &mut data.as_ref();
+
+        let a = UnsignedDirectRun::new(data).collect::<Vec<_>>();
         assert_eq!(a, vec![23713, 43806, 57005, 48879]);
+        assert_eq!(data, &[]);
     }
 
     #[test]
@@ -304,7 +548,10 @@ mod test {
         // 0x46 = 70
         let data: [u8; 8] = [0xc6, 0x09, 0x02, 0x02, 0x22, 0x42, 0x42, 0x46];
 
-        let a = delta_u64(&data).unwrap().collect::<Vec<_>>();
+        let data = &mut data.as_ref();
+
+        let a = UnsignedDeltaRun::try_new(data).unwrap().collect::<Vec<_>>();
         assert_eq!(a, vec![2, 3, 5, 7, 11, 13, 17, 19, 23, 29]);
+        assert_eq!(data, &[]);
     }
 }
