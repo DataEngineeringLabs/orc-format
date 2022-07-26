@@ -38,31 +38,7 @@ impl Stripe {
         })
     }
 
-    pub fn get_bytes<'a>(
-        &'a self,
-        column: usize,
-        kind: Kind,
-        scratch: &'a mut Vec<u8>,
-    ) -> Result<&'a [u8], Error> {
-        scratch.clear();
-        let column = column as u32;
-        self.footer
-            .streams
-            .iter()
-            .zip(self.offsets.windows(2))
-            .find(|(stream, _)| stream.column() == column && stream.kind() == kind)
-            .map(|(stream, offsets)| {
-                let start = offsets[0];
-                debug_assert_eq!(offsets[1] - offsets[0], stream.length());
-                let length = stream.length();
-                let data = &self.stripe[start as usize..(start + length) as usize];
-                super::decompress::maybe_decompress(data, self.compression, scratch)
-            })
-            .transpose()?
-            .ok_or(Error::InvalidColumn(column, kind))
-    }
-
-    pub fn get_bytes_iter(
+    pub fn get_bytes(
         &self,
         column: usize,
         kind: Kind,

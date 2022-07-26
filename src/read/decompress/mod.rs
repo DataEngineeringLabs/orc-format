@@ -32,7 +32,7 @@ fn decompress_zlib<'a>(
     Ok(scratch)
 }
 
-pub fn maybe_decompress<'a>(
+pub(super) fn maybe_decompress<'a>(
     maybe_compressed: &'a [u8],
     compression: CompressionKind,
     scratch: &'a mut Vec<u8>,
@@ -65,6 +65,13 @@ impl<'a> Decompressor<'a> {
             scratch,
         }
     }
+
+    pub fn into_inner(self) -> Vec<u8> {
+        match self.current {
+            Some(State::Compressed(some)) => some,
+            _ => self.scratch,
+        }
+    }
 }
 
 impl<'a> FallibleStreamingIterator for Decompressor<'a> {
@@ -75,6 +82,7 @@ impl<'a> FallibleStreamingIterator for Decompressor<'a> {
     #[inline]
     fn advance(&mut self) -> Result<(), Self::Error> {
         if self.stream.is_empty() {
+            self.current = None;
             return Ok(());
         }
         match self.compression {

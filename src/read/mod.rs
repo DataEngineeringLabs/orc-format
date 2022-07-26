@@ -9,7 +9,7 @@ use crate::proto::{CompressionKind, Footer, Metadata, PostScript, StripeFooter};
 use super::Error;
 
 pub mod decode;
-mod decompress;
+pub mod decompress;
 mod stripe;
 pub use stripe::Stripe;
 
