@@ -3,6 +3,7 @@ use crate::{
     Error,
 };
 
+use super::decompress::Decompressor;
 use super::deserialize_stripe_footer;
 
 #[derive(Debug)]
@@ -37,13 +38,12 @@ impl Stripe {
         })
     }
 
-    pub fn get_bytes<'a>(
-        &'a self,
+    pub fn get_bytes(
+        &self,
         column: usize,
         kind: Kind,
-        scratch: &'a mut Vec<u8>,
-    ) -> Result<&'a [u8], Error> {
-        scratch.clear();
+        scratch: Vec<u8>,
+    ) -> Result<Decompressor, Error> {
         let column = column as u32;
         self.footer
             .streams
@@ -55,9 +55,8 @@ impl Stripe {
                 debug_assert_eq!(offsets[1] - offsets[0], stream.length());
                 let length = stream.length();
                 let data = &self.stripe[start as usize..(start + length) as usize];
-                super::decompress::maybe_decompress(data, self.compression, scratch)
+                Decompressor::new(data, self.compression, scratch)
             })
-            .transpose()?
             .ok_or(Error::InvalidColumn(column, kind))
     }
 

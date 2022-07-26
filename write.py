@@ -1,3 +1,5 @@
+import random
+
 import pyorc
 
 data = {
@@ -73,7 +75,7 @@ _write("struct<dict:string>", data_dict, "string_long_long.orc")
 _write("struct<dict:string>", data_dict, "string_long_long_gzip.orc", pyorc.CompressionKind.ZLIB)
 
 long_f32 = {
-    "dict": [10.1 + i for i in range(10**4)],
+    "dict": [random.uniform(0, 1) for _ in range(10**6)],
 }
 
 _write("struct<dict:float>", long_f32, "f32_long_long_gzip.orc", pyorc.CompressionKind.ZLIB)

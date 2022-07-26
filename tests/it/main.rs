@@ -259,8 +259,8 @@ fn read_f32_long_long_gzip() -> Result<(), Error> {
     let stripe = get_test_stripe("f32_long_long_gzip.orc")?;
 
     let (a, b) = deserialize_f32_array(&stripe, 1)?;
-    assert_eq!(a.len(), 10_000);
-    assert_eq!(a, vec![true; 10_000]);
-    assert_eq!(b.len(), 10_000);
+    assert_eq!(a.len(), 1_000_000);
+    assert_eq!(a, vec![true; 1_000_000]);
+    assert_eq!(b.len(), 1_000_000);
     Ok(())
 }

@@ -21,8 +21,6 @@ It currently reads the following (logical) types:
 What is not yet implemented:
 
 * Snappy, LZO decompression
-* streaming decompression (i.e. if a stripe is compressed in chunks - we currently only
-  support a single chunk)
 * RLE v2 `Patched Base` decoding
 * RLE v1 decoding
 * Utility functions to decode non-native logical types:
