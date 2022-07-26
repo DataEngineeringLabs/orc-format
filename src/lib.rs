@@ -3,6 +3,8 @@ use proto::stream::Kind;
 pub mod proto;
 pub mod read;
 
+pub use fallible_streaming_iterator;
+
 #[derive(Debug, Clone)]
 pub enum Error {
     OutOfSpec,

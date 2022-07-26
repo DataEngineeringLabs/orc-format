@@ -1,5 +1,5 @@
-use fallible_streaming_iterator::FallibleStreamingIterator;
 use orc_format::{
+    fallible_streaming_iterator::FallibleStreamingIterator,
     proto::{column_encoding::Kind as ColumnEncodingKind, stream::Kind},
     read,
     read::decode::{
