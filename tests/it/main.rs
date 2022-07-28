@@ -6,7 +6,7 @@ use std::{
 mod deserialize;
 use deserialize::*;
 
-use orc_format::{read, read::Stripe, Error};
+use orc_format::{error::Error, read, read::Stripe};
 
 fn get_test_stripe(path: &str) -> Result<Stripe, Error> {
     let mut f = File::open(path).expect("no file found");

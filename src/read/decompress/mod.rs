@@ -2,9 +2,8 @@ use std::io::Read;
 
 use fallible_streaming_iterator::FallibleStreamingIterator;
 
+use crate::error::Error;
 use crate::proto::CompressionKind;
-
-use super::super::Error;
 
 fn decode_header(bytes: &[u8]) -> (bool, usize) {
     let a: [u8; 3] = (&bytes[..3]).try_into().unwrap();
@@ -16,40 +15,12 @@ fn decode_header(bytes: &[u8]) -> (bool, usize) {
     (is_original, length)
 }
 
-fn decompress_zlib<'a>(
-    maybe_compressed: &'a [u8],
-    scratch: &'a mut Vec<u8>,
-) -> Result<&'a [u8], Error> {
-    let (is_original, length) = decode_header(maybe_compressed);
-    let maybe_compressed = maybe_compressed
-        .get(3..3 + length)
-        .ok_or(Error::OutOfSpec)?;
-    if is_original {
-        return Ok(maybe_compressed);
-    }
-    let mut gz = flate2::read::DeflateDecoder::new(maybe_compressed);
-    gz.read_to_end(scratch).unwrap();
-    Ok(scratch)
-}
-
-pub(super) fn maybe_decompress<'a>(
-    maybe_compressed: &'a [u8],
-    compression: CompressionKind,
-    scratch: &'a mut Vec<u8>,
-) -> Result<&'a [u8], Error> {
-    Ok(match compression {
-        CompressionKind::None => maybe_compressed,
-        CompressionKind::Zlib => decompress_zlib(maybe_compressed, scratch)?,
-        _ => todo!(),
-    })
-}
-
 enum State<'a> {
     Original(&'a [u8]),
     Compressed(Vec<u8>),
 }
 
-pub struct Decompressor<'a> {
+struct Decompressor<'a> {
     stream: &'a [u8],
     current: Option<State<'a>>, // when we have compression but the value is original
     compression: CompressionKind,
@@ -102,7 +73,7 @@ impl<'a> FallibleStreamingIterator for Decompressor<'a> {
                 } else {
                     let mut gz = flate2::read::DeflateDecoder::new(maybe_compressed);
                     self.scratch.clear();
-                    gz.read_to_end(&mut self.scratch).unwrap();
+                    gz.read_to_end(&mut self.scratch)?;
                     self.current = Some(State::Compressed(std::mem::take(&mut self.scratch)));
                 }
             }
@@ -117,6 +88,62 @@ impl<'a> FallibleStreamingIterator for Decompressor<'a> {
             State::Original(x) => *x,
             State::Compressed(x) => x.as_ref(),
         })
+    }
+}
+
+pub struct StreamingDecompressor<'a> {
+    decompressor: Decompressor<'a>,
+    offset: usize,
+    is_first: bool,
+}
+
+impl<'a> StreamingDecompressor<'a> {
+    pub fn new(stream: &'a [u8], compression: CompressionKind, scratch: Vec<u8>) -> Self {
+        Self {
+            decompressor: Decompressor::new(stream, compression, scratch),
+            offset: 0,
+            is_first: true,
+        }
+    }
+
+    pub fn into_inner(self) -> Vec<u8> {
+        self.decompressor.into_inner()
+    }
+}
+
+impl<'a> std::io::Read for StreamingDecompressor<'a> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        if self.is_first {
+            self.is_first = false;
+            self.decompressor.advance().unwrap();
+        }
+        let current = self.decompressor.get();
+        let current = if let Some(current) = current {
+            if current.len() == self.offset {
+                self.decompressor.advance().unwrap();
+                self.offset = 0;
+                let current = self.decompressor.get();
+                if let Some(current) = current {
+                    current
+                } else {
+                    return Ok(0);
+                }
+            } else {
+                &current[self.offset..]
+            }
+        } else {
+            return Ok(0);
+        };
+
+        if current.len() >= buf.len() {
+            buf.copy_from_slice(&current[..buf.len()]);
+            self.offset += buf.len();
+            Ok(buf.len())
+        } else {
+            buf[..current.len()].copy_from_slice(current);
+            self.offset += current.len();
+            Ok(current.len())
+        }
     }
 }
 

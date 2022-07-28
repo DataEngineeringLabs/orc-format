@@ -1,9 +1,9 @@
 use crate::{
+    error::Error,
     proto::{stream::Kind, ColumnEncoding, CompressionKind, StripeFooter, StripeInformation},
-    Error,
 };
 
-use super::decompress::Decompressor;
+use super::decompress::StreamingDecompressor;
 use super::deserialize_stripe_footer;
 
 #[derive(Debug)]
@@ -38,12 +38,16 @@ impl Stripe {
         })
     }
 
+    pub fn columns(&self) -> &[ColumnEncoding] {
+        &self.footer.columns
+    }
+
     pub fn get_bytes(
         &self,
         column: usize,
         kind: Kind,
         scratch: Vec<u8>,
-    ) -> Result<Decompressor, Error> {
+    ) -> Result<StreamingDecompressor, Error> {
         let column = column as u32;
         self.footer
             .streams
@@ -55,7 +59,7 @@ impl Stripe {
                 debug_assert_eq!(offsets[1] - offsets[0], stream.length());
                 let length = stream.length();
                 let data = &self.stripe[start as usize..(start + length) as usize];
-                Decompressor::new(data, self.compression, scratch)
+                StreamingDecompressor::new(data, self.compression, scratch)
             })
             .ok_or(Error::InvalidColumn(column, kind))
     }

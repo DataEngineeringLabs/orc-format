@@ -1,12 +1,18 @@
+//! APIs to read from ORC
+//!
+//! Reading from ORC is essentially composed by:
+//! 1. Identify the column type based on the file's schema
+//! 2. Read the stripe (or part of it in projection pushdown)
+//! 3. For each column, select the relevant region of the stripe
+//! 4. Attach an Iterator to the region
 #![forbid(unsafe_code)]
 
 use std::io::{Read, Seek, SeekFrom};
 
 use prost::Message;
 
+use crate::error::Error;
 use crate::proto::{CompressionKind, Footer, Metadata, PostScript, StripeFooter};
-
-use super::Error;
 
 pub mod decode;
 pub mod decompress;
@@ -71,31 +77,25 @@ where
 }
 
 fn deserialize_footer(bytes: &[u8], compression: CompressionKind) -> Result<Footer, Error> {
-    Ok(Footer::decode(decompress::maybe_decompress(
-        bytes,
-        compression,
-        &mut vec![],
-    )?)?)
+    let mut buffer = vec![];
+    decompress::StreamingDecompressor::new(bytes, compression, vec![]).read_to_end(&mut buffer)?;
+    Ok(Footer::decode(&*buffer)?)
 }
 
 fn deserialize_footer_metadata(
     bytes: &[u8],
     compression: CompressionKind,
 ) -> Result<Metadata, Error> {
-    Ok(Metadata::decode(decompress::maybe_decompress(
-        bytes,
-        compression,
-        &mut vec![],
-    )?)?)
+    let mut buffer = vec![];
+    decompress::StreamingDecompressor::new(bytes, compression, vec![]).read_to_end(&mut buffer)?;
+    Ok(Metadata::decode(&*buffer)?)
 }
 
 fn deserialize_stripe_footer(
     bytes: &[u8],
     compression: CompressionKind,
 ) -> Result<StripeFooter, Error> {
-    Ok(StripeFooter::decode(decompress::maybe_decompress(
-        bytes,
-        compression,
-        &mut vec![],
-    )?)?)
+    let mut buffer = vec![];
+    decompress::StreamingDecompressor::new(bytes, compression, vec![]).read_to_end(&mut buffer)?;
+    Ok(StripeFooter::decode(&*buffer)?)
 }
