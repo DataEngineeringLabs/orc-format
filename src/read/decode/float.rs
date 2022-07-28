@@ -38,6 +38,7 @@ pub struct FloatIter<'a, T: Float, R: std::io::Read> {
 }
 
 impl<'a, T: Float, R: std::io::Read> FloatIter<'a, T, R> {
+    /// Returns a new [`FloatIter`]
     #[inline]
     pub fn new(reader: &'a mut R, length: usize) -> Self {
         Self {
@@ -47,11 +48,13 @@ impl<'a, T: Float, R: std::io::Read> FloatIter<'a, T, R> {
         }
     }
 
+    /// The number of items remaining
     #[inline]
     pub fn len(&self) -> usize {
         self.remaining
     }
 
+    /// Whether the iterator is empty
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.len() == 0

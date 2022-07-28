@@ -54,10 +54,12 @@ impl Column {
             .ok_or(Error::InvalidKind(self.column, kind))
     }
 
+    /// Returns the encoding of the column
     pub fn encoding(&self) -> &ColumnEncoding {
         &self.footer.columns[self.column as usize]
     }
 
+    /// Returns the number of items in the dictionary, if any
     pub fn dictionary_size(&self) -> Option<usize> {
         self.footer.columns[self.column as usize]
             .dictionary_size

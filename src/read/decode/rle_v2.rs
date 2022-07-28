@@ -413,12 +413,6 @@ impl Iterator for SignedDeltaRun {
     }
 }
 
-pub enum IteratorEnum<I, II, III> {
-    Direct(I),
-    Delta(II),
-    ShortRepeat(III),
-}
-
 #[inline]
 fn run_encoding(header: u8) -> EncodingTypeV2 {
     match (header & 128 == 128, header & 64 == 64) {
@@ -433,13 +427,18 @@ fn run_encoding(header: u8) -> EncodingTypeV2 {
     }
 }
 
+/// An enum describing one of the RLE v2 runs for unsigned integers
 pub enum UnsignedRleV2Run {
+    /// Direct
     Direct(UnsignedDirectRun),
+    /// Delta
     Delta(UnsignedDeltaRun),
+    /// Short repeat
     ShortRepeat(UnsignedShortRepeat),
 }
 
 impl UnsignedRleV2Run {
+    /// Returns a new [`UnsignedRleV2Run`] owning `scratch`.
     pub fn try_new<R: Read>(reader: &mut R, scratch: Vec<u8>) -> Result<Self, Error> {
         let mut header = [0u8];
         reader.read_exact(&mut header)?;
@@ -460,6 +459,7 @@ impl UnsignedRleV2Run {
         }
     }
 
+    /// The number of items remaining
     pub fn len(&self) -> usize {
         match self {
             Self::Direct(run) => run.len(),
@@ -468,12 +468,14 @@ impl UnsignedRleV2Run {
         }
     }
 
+    /// Whether the iterator is empty
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
 }
 
+/// A fallible [`Iterator`] of [`UnsignedRleV2Run`].
 pub struct UnsignedRleV2Iter<'a, R: Read> {
     reader: &'a mut R,
     scratch: Vec<u8>,
@@ -481,6 +483,7 @@ pub struct UnsignedRleV2Iter<'a, R: Read> {
 }
 
 impl<'a, R: Read> UnsignedRleV2Iter<'a, R> {
+    /// Returns a new [`UnsignedRleV2Iter`].
     pub fn new(reader: &'a mut R, length: usize, scratch: Vec<u8>) -> Self {
         Self {
             reader,
@@ -514,6 +517,7 @@ impl SignedDirectRun {
         self.0.len()
     }
 
+    /// Whether the iterator is empty
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.len() == 0
@@ -540,10 +544,12 @@ impl SignedShortRepeat {
         UnsignedShortRepeat::try_new(header, reader, scratch).map(Self)
     }
 
+    /// The number of items remaining
     pub fn len(&self) -> usize {
         self.0.len()
     }
 
+    /// Whether the iterator is empty
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.len() == 0
@@ -562,14 +568,19 @@ impl Iterator for SignedShortRepeat {
     }
 }
 
+/// An enum describing one of the RLE v2 runs for signed integers
 #[derive(Debug)]
 pub enum SignedRleV2Run {
+    /// Direct
     Direct(SignedDirectRun),
+    /// Delta
     Delta(SignedDeltaRun),
+    /// Short repeat
     ShortRepeat(SignedShortRepeat),
 }
 
 impl SignedRleV2Run {
+    /// Returns a new [`SignedRleV2Run`], moving `scratch` to itself
     pub fn try_new<R: Read>(reader: &mut R, scratch: Vec<u8>) -> Result<Self, Error> {
         let mut header = [0u8];
         reader.read_exact(&mut header)?;
@@ -590,6 +601,7 @@ impl SignedRleV2Run {
         }
     }
 
+    /// The number of items remaining
     pub fn len(&self) -> usize {
         match self {
             Self::Direct(run) => run.len(),
@@ -598,12 +610,14 @@ impl SignedRleV2Run {
         }
     }
 
+    /// Whether the iterator is empty
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
 }
 
+/// A fallible [`Iterator`] of [`SignedRleV2Run`].
 pub struct SignedRleV2Iter<R: Read> {
     reader: R,
     scratch: Vec<u8>,
@@ -611,6 +625,7 @@ pub struct SignedRleV2Iter<R: Read> {
 }
 
 impl<R: Read> SignedRleV2Iter<R> {
+    /// Returns a new [`SignedRleV2Iter`].
     pub fn new(reader: R, length: usize, scratch: Vec<u8>) -> Self {
         Self {
             reader,
