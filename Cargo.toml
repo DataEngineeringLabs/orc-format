@@ -1,6 +1,6 @@
 [package]
 name = "orc-format"
-version = "0.1.1"
+version = "0.2.0"
 license = "MIT/Apache-2.0"
 description = "Unofficial implementation of Apache ORC spec in safe Rust"
 homepage = "https://github.com/DataEngineeringLabs/orc-format"
