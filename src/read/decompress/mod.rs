@@ -20,14 +20,14 @@ enum State<'a> {
     Compressed(Vec<u8>),
 }
 
-struct Decompressor<'a> {
+struct DecompressorIter<'a> {
     stream: &'a [u8],
     current: Option<State<'a>>, // when we have compression but the value is original
     compression: CompressionKind,
     scratch: Vec<u8>,
 }
 
-impl<'a> Decompressor<'a> {
+impl<'a> DecompressorIter<'a> {
     pub fn new(stream: &'a [u8], compression: CompressionKind, scratch: Vec<u8>) -> Self {
         Self {
             stream,
@@ -45,7 +45,7 @@ impl<'a> Decompressor<'a> {
     }
 }
 
-impl<'a> FallibleStreamingIterator for Decompressor<'a> {
+impl<'a> FallibleStreamingIterator for DecompressorIter<'a> {
     type Item = [u8];
 
     type Error = Error;
@@ -91,16 +91,16 @@ impl<'a> FallibleStreamingIterator for Decompressor<'a> {
     }
 }
 
-pub struct StreamingDecompressor<'a> {
-    decompressor: Decompressor<'a>,
+pub struct Decompressor<'a> {
+    decompressor: DecompressorIter<'a>,
     offset: usize,
     is_first: bool,
 }
 
-impl<'a> StreamingDecompressor<'a> {
+impl<'a> Decompressor<'a> {
     pub fn new(stream: &'a [u8], compression: CompressionKind, scratch: Vec<u8>) -> Self {
         Self {
-            decompressor: Decompressor::new(stream, compression, scratch),
+            decompressor: DecompressorIter::new(stream, compression, scratch),
             offset: 0,
             is_first: true,
         }
@@ -111,7 +111,7 @@ impl<'a> StreamingDecompressor<'a> {
     }
 }
 
-impl<'a> std::io::Read for StreamingDecompressor<'a> {
+impl<'a> std::io::Read for Decompressor<'a> {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         if self.is_first {
             self.is_first = false;

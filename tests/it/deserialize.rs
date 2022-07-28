@@ -5,19 +5,15 @@ use orc_format::{
     read::decode::{
         BooleanIter, SignedRleV2Iter, SignedRleV2Run, UnsignedRleV2Iter, UnsignedRleV2Run,
     },
-    read::decompress::StreamingDecompressor,
-    read::Stripe,
+    read::decompress::Decompressor,
+    read::Column,
 };
 
-fn deserialize_validity(
-    stripe: &Stripe,
-    column: usize,
-    scratch: &mut Vec<u8>,
-) -> Result<Vec<bool>, Error> {
-    let mut reader = stripe.get_bytes(column, Kind::Present, std::mem::take(scratch))?;
+fn deserialize_validity(column: &Column, scratch: &mut Vec<u8>) -> Result<Vec<bool>, Error> {
+    let mut reader = column.get_stream(Kind::Present, std::mem::take(scratch))?;
 
-    let mut validity = Vec::with_capacity(stripe.number_of_rows());
-    BooleanIter::new(&mut reader, stripe.number_of_rows()).try_for_each(|item| {
+    let mut validity = Vec::with_capacity(column.number_of_rows());
+    BooleanIter::new(&mut reader, column.number_of_rows()).try_for_each(|item| {
         validity.push(item?);
         Result::<(), Error>::Ok(())
     })?;
@@ -27,15 +23,12 @@ fn deserialize_validity(
     Ok(validity)
 }
 
-pub fn deserialize_f32_array(
-    stripe: &Stripe,
-    column: usize,
-) -> Result<(Vec<bool>, Vec<f32>), Error> {
+pub fn deserialize_f32_array(column: &Column) -> Result<(Vec<bool>, Vec<f32>), Error> {
     let mut scratch = vec![];
 
-    let validity = deserialize_validity(stripe, column, &mut scratch)?;
+    let validity = deserialize_validity(column, &mut scratch)?;
 
-    let mut reader = stripe.get_bytes(column, Kind::Data, scratch)?;
+    let mut reader = column.get_stream(Kind::Data, scratch)?;
 
     let num_of_values: usize = validity.iter().map(|x| *x as usize).sum();
 
@@ -48,17 +41,14 @@ pub fn deserialize_f32_array(
     Ok((validity, valid_values))
 }
 
-pub fn deserialize_int_array(
-    stripe: &Stripe,
-    column: usize,
-) -> Result<(Vec<bool>, Vec<i64>), Error> {
+pub fn deserialize_int_array(column: &Column) -> Result<(Vec<bool>, Vec<i64>), Error> {
     let mut scratch = vec![];
 
-    let validity = deserialize_validity(stripe, column, &mut scratch)?;
+    let validity = deserialize_validity(column, &mut scratch)?;
 
     let num_of_values: usize = validity.iter().map(|x| *x as usize).sum();
 
-    let reader = stripe.get_bytes(column, Kind::Data, scratch)?;
+    let reader = column.get_stream(Kind::Data, scratch)?;
 
     let mut valid_values = Vec::with_capacity(num_of_values);
 
@@ -73,17 +63,14 @@ pub fn deserialize_int_array(
     Ok((validity, valid_values))
 }
 
-pub fn deserialize_bool_array(
-    stripe: &Stripe,
-    column: usize,
-) -> Result<(Vec<bool>, Vec<bool>), Error> {
+pub fn deserialize_bool_array(column: &Column) -> Result<(Vec<bool>, Vec<bool>), Error> {
     let mut scratch = vec![];
 
-    let validity = deserialize_validity(stripe, column, &mut scratch)?;
+    let validity = deserialize_validity(column, &mut scratch)?;
 
     let num_of_values: usize = validity.iter().map(|x| *x as usize).sum();
 
-    let mut reader = stripe.get_bytes(column, Kind::Data, std::mem::take(&mut scratch))?;
+    let mut reader = column.get_stream(Kind::Data, std::mem::take(&mut scratch))?;
 
     let mut valid_values = Vec::with_capacity(num_of_values);
     BooleanIter::new(&mut reader, num_of_values).try_for_each(|item| {
@@ -95,8 +82,8 @@ pub fn deserialize_bool_array(
 }
 
 pub fn deserialize_str(
-    lengths: UnsignedRleV2Iter<StreamingDecompressor>,
-    values: &mut read::decode::Values<StreamingDecompressor>,
+    lengths: UnsignedRleV2Iter<Decompressor>,
+    values: &mut read::decode::Values<Decompressor>,
     num_of_values: usize,
 ) -> Result<Vec<String>, Error> {
     let mut result = Vec::with_capacity(num_of_values);
@@ -128,29 +115,24 @@ pub fn deserialize_str(
 }
 
 pub fn deserialize_str_dict_array(
-    stripe: &Stripe,
-    column: usize,
+    column: &Column,
     scratch: Vec<u8>,
     num_of_values: usize,
 ) -> Result<Vec<String>, Error> {
-    let values = stripe.get_bytes(column, Kind::DictionaryData, scratch)?;
+    let values = column.get_stream(Kind::DictionaryData, scratch)?;
 
     let mut values_iter = read::decode::Values::new(values, vec![]);
 
     let scratch2 = vec![];
-    let mut lengths = stripe.get_bytes(column, Kind::Length, scratch2)?;
+    let mut lengths = column.get_stream(Kind::Length, scratch2)?;
 
-    let lengths = UnsignedRleV2Iter::new(
-        &mut lengths,
-        stripe.columns()[column].dictionary_size() as usize,
-        vec![],
-    );
+    let lengths = UnsignedRleV2Iter::new(&mut lengths, column.dictionary_size().unwrap(), vec![]);
 
     let values = deserialize_str(lengths, &mut values_iter, 0)?;
     let scratch = values_iter.into_inner();
 
-    let mut indices = stripe.get_bytes(column, Kind::Data, scratch)?;
-    let indices = UnsignedRleV2Iter::new(&mut indices, stripe.number_of_rows(), vec![]);
+    let mut indices = column.get_stream(Kind::Data, scratch)?;
+    let indices = UnsignedRleV2Iter::new(&mut indices, column.number_of_rows(), vec![]);
 
     let f = |x| values.get(x as usize).cloned().ok_or(Error::OutOfSpec);
 
@@ -176,39 +158,36 @@ pub fn deserialize_str_dict_array(
 }
 
 fn deserialize_str_array_direct(
-    stripe: &Stripe,
-    column: usize,
+    column: &Column,
+
     scratch: Vec<u8>,
     num_of_values: usize,
 ) -> Result<Vec<String>, Error> {
-    let values = stripe.get_bytes(column, Kind::Data, scratch)?;
+    let values = column.get_stream(Kind::Data, scratch)?;
     let mut values = read::decode::Values::new(values, vec![]);
 
     let scratch1 = vec![];
-    let mut lengths = stripe.get_bytes(column, Kind::Length, scratch1)?;
+    let mut lengths = column.get_stream(Kind::Length, scratch1)?;
     let lengths = UnsignedRleV2Iter::new(&mut lengths, num_of_values, vec![]);
 
     deserialize_str(lengths, &mut values, num_of_values)
 }
 
-pub fn deserialize_str_array(
-    stripe: &Stripe,
-    column: usize,
-) -> Result<(Vec<bool>, Vec<String>), Error> {
+pub fn deserialize_str_array(column: &Column) -> Result<(Vec<bool>, Vec<String>), Error> {
     let mut scratch = vec![];
 
-    let validity = deserialize_validity(stripe, column, &mut scratch)?;
+    let validity = deserialize_validity(column, &mut scratch)?;
 
     let num_of_values: usize = validity.iter().map(|x| *x as usize).sum();
 
     // todo: generalize to other encodings
-    let encoding = stripe.get_encoding(column)?;
+    let encoding = column.encoding();
     let valid_values = match encoding.kind() {
         ColumnEncodingKind::DirectV2 => {
-            deserialize_str_array_direct(stripe, column, scratch, num_of_values)?
+            deserialize_str_array_direct(column, scratch, num_of_values)?
         }
         ColumnEncodingKind::DictionaryV2 => {
-            deserialize_str_dict_array(stripe, column, scratch, num_of_values)?
+            deserialize_str_dict_array(column, scratch, num_of_values)?
         }
         other => todo!("{other:?}"),
     };
