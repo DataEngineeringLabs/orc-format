@@ -1,17 +1,26 @@
+//! APIs to read from ORC
+//!
+//! Reading from ORC is essentially composed by:
+//! 1. Identify the column type based on the file's schema
+//! 2. Read the stripe (or part of it in projection pushdown)
+//! 3. For each column, select the relevant region of the stripe
+//! 4. Attach an Iterator to the region
 #![forbid(unsafe_code)]
 
 use std::io::{Read, Seek, SeekFrom};
 
 use prost::Message;
 
-use crate::proto::{CompressionKind, Footer, Metadata, PostScript, StripeFooter};
-
-use super::Error;
+use crate::error::Error;
+use crate::proto::stream::Kind;
+use crate::proto::{
+    CompressionKind, Footer, Metadata, PostScript, StripeFooter, StripeInformation,
+};
 
 pub mod decode;
 pub mod decompress;
 mod stripe;
-pub use stripe::Stripe;
+pub use stripe::Column;
 
 const DEFAULT_FOOTER_SIZE: u64 = 16 * 1024;
 
@@ -29,7 +38,15 @@ fn stream_len(seek: &mut impl Seek) -> std::result::Result<u64, std::io::Error> 
     Ok(len)
 }
 
-pub fn read_metadata<R>(reader: &mut R) -> Result<(PostScript, Footer, Metadata), Error>
+/// The file's metadata.
+#[derive(Debug)]
+pub struct FileMetadata {
+    pub postscript: PostScript,
+    pub footer: Footer,
+    pub metadata: Metadata,
+}
+
+pub fn read_metadata<R>(reader: &mut R) -> Result<FileMetadata, Error>
 where
     R: Read + Seek,
 {
@@ -43,8 +60,8 @@ where
     };
 
     reader.seek(SeekFrom::End(-(footer_len as i64)))?;
-    let mut tail_bytes = vec![0; footer_len as usize];
-    reader.read_exact(&mut tail_bytes)?;
+    let mut tail_bytes = Vec::with_capacity(footer_len as usize);
+    reader.take(footer_len).read_to_end(&mut tail_bytes)?;
 
     // The final byte of the file contains the serialized length of the Postscript,
     // which must be less than 256 bytes.
@@ -56,46 +73,110 @@ where
     tail_bytes.truncate(tail_bytes.len() - postscript_len);
 
     // next is the footer
-    let footer_length = postscript.footer_length.unwrap() as usize; // todo: throw error
+    let footer_length = postscript.footer_length.ok_or(Error::OutOfSpec)? as usize; // todo: throw error
 
     let footer = &tail_bytes[tail_bytes.len() - footer_length..];
     let footer = deserialize_footer(footer, postscript.compression())?;
     tail_bytes.truncate(tail_bytes.len() - footer_length);
 
     // finally the metadata
-    let metadata_length = postscript.metadata_length.unwrap() as usize; // todo: throw error
+    let metadata_length = postscript.metadata_length.ok_or(Error::OutOfSpec)? as usize; // todo: throw error
     let metadata = &tail_bytes[tail_bytes.len() - metadata_length..];
     let metadata = deserialize_footer_metadata(metadata, postscript.compression())?;
 
-    Ok((postscript, footer, metadata))
+    Ok(FileMetadata {
+        postscript,
+        footer,
+        metadata,
+    })
+}
+
+/// Reads, decompresses and deserializes the stripe's footer as [`StripeFooter`] using
+/// `scratch` as an intermediary memory region.
+/// # Implementation
+/// This function is guaranteed to perform exactly one seek and one read to `reader`.
+pub fn read_stripe_footer<R: Read + Seek>(
+    reader: &mut R,
+    stripe: &StripeInformation,
+    compression: CompressionKind,
+    scratch: &mut Vec<u8>,
+) -> Result<StripeFooter, Error> {
+    let start = stripe.offset() + stripe.index_length() + stripe.data_length();
+    let len = stripe.footer_length();
+    reader.seek(SeekFrom::Start(start))?;
+
+    scratch.clear();
+    scratch.reserve(len as usize);
+    reader.take(len).read_to_end(scratch)?;
+    deserialize_stripe_footer(scratch, compression)
+}
+
+/// Reads `column` from the stripe into a [`Column`].
+/// `scratch` becomes owned by [`Column`], which you can recover via `into_inner`.
+/// # Implementation
+/// This function is guaranteed to perform exactly one seek and one read to `reader`.
+pub fn read_stripe_column<R: Read + Seek>(
+    reader: &mut R,
+    stripe: &StripeInformation,
+    footer: StripeFooter,
+    compression: CompressionKind,
+    column: u32,
+    mut scratch: Vec<u8>,
+) -> Result<Column, Error> {
+    let mut start = 0; // the start of the stream
+
+    let start = footer
+        .streams
+        .iter()
+        .map(|stream| {
+            start += stream.length();
+            (start, stream)
+        })
+        .find(|(_, stream)| stream.column() == column && stream.kind() != Kind::RowIndex)
+        .map(|(start, stream)| start - stream.length())
+        .ok_or(Error::InvalidColumn(column))?;
+
+    let length = footer
+        .streams
+        .iter()
+        .filter(|stream| stream.column() == column && stream.kind() != Kind::RowIndex)
+        .fold(0, |acc, stream| acc + stream.length());
+
+    let start = stripe.offset() + start;
+    reader.seek(SeekFrom::Start(start))?;
+
+    scratch.clear();
+    scratch.reserve(length as usize);
+    reader.take(length).read_to_end(&mut scratch)?;
+    Ok(Column::new(
+        scratch,
+        column,
+        stripe.number_of_rows(),
+        footer,
+        compression,
+    ))
 }
 
 fn deserialize_footer(bytes: &[u8], compression: CompressionKind) -> Result<Footer, Error> {
-    Ok(Footer::decode(decompress::maybe_decompress(
-        bytes,
-        compression,
-        &mut vec![],
-    )?)?)
+    let mut buffer = vec![];
+    decompress::Decompressor::new(bytes, compression, vec![]).read_to_end(&mut buffer)?;
+    Ok(Footer::decode(&*buffer)?)
 }
 
 fn deserialize_footer_metadata(
     bytes: &[u8],
     compression: CompressionKind,
 ) -> Result<Metadata, Error> {
-    Ok(Metadata::decode(decompress::maybe_decompress(
-        bytes,
-        compression,
-        &mut vec![],
-    )?)?)
+    let mut buffer = vec![];
+    decompress::Decompressor::new(bytes, compression, vec![]).read_to_end(&mut buffer)?;
+    Ok(Metadata::decode(&*buffer)?)
 }
 
 fn deserialize_stripe_footer(
     bytes: &[u8],
     compression: CompressionKind,
 ) -> Result<StripeFooter, Error> {
-    Ok(StripeFooter::decode(decompress::maybe_decompress(
-        bytes,
-        compression,
-        &mut vec![],
-    )?)?)
+    let mut buffer = vec![];
+    decompress::Decompressor::new(bytes, compression, vec![]).read_to_end(&mut buffer)?;
+    Ok(StripeFooter::decode(&*buffer)?)
 }

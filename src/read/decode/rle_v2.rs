@@ -1,4 +1,6 @@
-use crate::Error;
+use std::io::Read;
+
+use crate::error::Error;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum EncodingTypeV2 {
@@ -66,7 +68,7 @@ fn header_to_rle_v2_direct_length(header: u8, header1: u8) -> u16 {
     1 + r
 }
 
-fn unsigned_varint<R: std::io::Read>(reader: &mut R) -> Result<u64, Error> {
+fn unsigned_varint<R: Read>(reader: &mut R) -> Result<u64, Error> {
     let mut i = 0u64;
     let mut buf = [0u8; 1];
     let mut j = 0;
@@ -95,7 +97,7 @@ fn zigzag(z: u64) -> i64 {
     }
 }
 
-fn signed_varint<R: std::io::Read>(reader: &mut R) -> Result<i64, Error> {
+fn signed_varint<R: Read>(reader: &mut R) -> Result<i64, Error> {
     unsigned_varint(reader).map(zigzag)
 }
 
@@ -120,36 +122,47 @@ fn unpack(bytes: &[u8], num_bits: u8, index: usize) -> u64 {
     (bits >> offset) & (!0u64 >> (64 - num_bits))
 }
 
-pub struct UnsignedDirectRun<'a> {
-    data: &'a [u8],
+#[derive(Debug)]
+pub struct UnsignedDirectRun {
+    data: Vec<u8>,
     bit_width: u8,
     index: usize,
     length: usize,
 }
 
-impl<'a> UnsignedDirectRun<'a> {
+impl UnsignedDirectRun {
     #[inline]
-    fn new(data: &mut &'a [u8]) -> Self {
-        let header = data[0];
+    pub fn try_new<R: Read>(
+        header: u8,
+        reader: &mut R,
+        mut scratch: Vec<u8>,
+    ) -> Result<Self, Error> {
+        let mut header1 = [0u8];
+        reader.read_exact(&mut header1)?;
         let bit_width = header_to_rle_v2_direct_bit_width(header);
 
-        let length = header_to_rle_v2_direct_length(header, data[1]);
-        let run_bytes = &data[2..];
+        let length = header_to_rle_v2_direct_length(header, header1[0]);
 
-        let remaining = ((bit_width as usize) * (length as usize) + 7) / 8;
-        let run = &run_bytes[..remaining];
-        *data = &run_bytes[remaining..];
+        let additional = ((bit_width as usize) * (length as usize) + 7) / 8;
+        scratch.clear();
+        scratch.reserve(additional);
+        reader.take(additional as u64).read_to_end(&mut scratch)?;
 
-        Self {
-            data: run,
+        Ok(Self {
+            data: scratch,
             bit_width,
             index: 0,
             length: length as usize,
-        }
+        })
+    }
+
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.length - self.index
     }
 }
 
-impl<'a> Iterator for UnsignedDirectRun<'a> {
+impl Iterator for UnsignedDirectRun {
     type Item = u64;
 
     #[inline]
@@ -157,19 +170,19 @@ impl<'a> Iterator for UnsignedDirectRun<'a> {
         (self.index != self.length).then(|| {
             let index = self.index;
             self.index += 1;
-            unpack(self.data, self.bit_width, index)
+            unpack(&self.data, self.bit_width, index)
         })
     }
 
     #[inline]
     fn size_hint(&self) -> (usize, Option<usize>) {
-        let remaining = self.length - self.index;
+        let remaining = self.len();
         (remaining, Some(remaining))
     }
 }
 
-pub struct UnsignedDeltaRun<'a> {
-    encoded_deltas: &'a [u8],
+pub struct UnsignedDeltaRun {
+    encoded_deltas: Vec<u8>,
     bit_width: u8,
     index: usize,
     length: usize,
@@ -177,33 +190,50 @@ pub struct UnsignedDeltaRun<'a> {
     delta_base: i64,
 }
 
-impl<'a> UnsignedDeltaRun<'a> {
+impl UnsignedDeltaRun {
     #[inline]
-    fn try_new(data: &mut &'a [u8]) -> Result<Self, Error> {
-        let header = data[0];
+    pub fn try_new<R: Read>(
+        header: u8,
+        reader: &mut R,
+        mut scratch: Vec<u8>,
+    ) -> Result<Self, Error> {
+        let mut header1 = [0u8];
+        reader.read_exact(&mut header1)?;
         let bit_width = header_to_rle_v2_delta_bit_width(header);
 
-        let length = header_to_rle_v2_direct_length(header, data[1]);
-        *data = &data[2..];
+        let length = header_to_rle_v2_direct_length(header, header1[0]);
 
-        let base = unsigned_varint(data)?;
-        let delta_base = signed_varint(data)?;
-        let remaining = ((length as usize - 2) * bit_width as usize + 7) / 8;
-        let encoded_deltas = &data[..remaining];
-        *data = &data[remaining..];
+        let base = unsigned_varint(reader)?;
+        let delta_base = signed_varint(reader)?;
+        let additional = ((length as usize - 2) * bit_width as usize + 7) / 8;
+
+        scratch.clear();
+        scratch.reserve(additional);
+        reader.take(additional as u64).read_to_end(&mut scratch)?;
 
         Ok(Self {
             base,
-            encoded_deltas,
+            encoded_deltas: scratch,
             bit_width,
             index: 0,
             length: length as usize,
             delta_base,
         })
     }
+
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.length - self.index
+    }
+
+    #[inline]
+    pub fn into_inner(mut self) -> Vec<u8> {
+        self.encoded_deltas.clear();
+        self.encoded_deltas
+    }
 }
 
-impl<'a> Iterator for UnsignedDeltaRun<'a> {
+impl Iterator for UnsignedDeltaRun {
     type Item = u64;
 
     #[inline]
@@ -224,7 +254,7 @@ impl<'a> Iterator for UnsignedDeltaRun<'a> {
                 return self.base;
             }
             self.index += 1;
-            let delta = unpack(self.encoded_deltas, self.bit_width, index - 2);
+            let delta = unpack(&self.encoded_deltas, self.bit_width, index - 2);
             if self.delta_base > 0 {
                 self.base += delta;
             } else {
@@ -236,32 +266,48 @@ impl<'a> Iterator for UnsignedDeltaRun<'a> {
 
     #[inline]
     fn size_hint(&self) -> (usize, Option<usize>) {
-        let remaining = self.length - self.index;
+        let remaining = self.len();
         (remaining, Some(remaining))
     }
 }
 
+#[derive(Debug)]
 pub struct UnsignedShortRepeat {
     value: u64,
     remaining: usize,
+    scratch: Vec<u8>,
 }
 
 impl UnsignedShortRepeat {
     #[inline]
-    fn new(data: &mut &[u8]) -> Self {
-        let header = data[0];
+    fn try_new<R: Read>(header: u8, reader: &mut R, mut scratch: Vec<u8>) -> Result<Self, Error> {
         let width = 1 + header_to_rle_v2_short_repeated_width(header);
         let count = 3 + header_to_rle_v2_short_repeated_count(header);
-        let inner = &data[1..1 + width as usize];
-        *data = &data[1 + width as usize..];
-        let mut a = [0u8; 8];
-        a[8 - inner.len()..].copy_from_slice(inner);
-        let value = u64::from_be_bytes(a);
 
-        Self {
+        scratch.clear();
+        scratch.reserve(width as usize);
+        reader.take(width as u64).read_to_end(&mut scratch)?;
+
+        let mut a = [0u8; 8];
+        a[8 - scratch.len()..].copy_from_slice(&scratch);
+        let value = u64::from_be_bytes(a);
+        scratch.clear();
+
+        Ok(Self {
             value,
             remaining: count as usize,
-        }
+            scratch,
+        })
+    }
+
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.remaining
+    }
+
+    #[inline]
+    pub fn into_inner(self) -> Vec<u8> {
+        self.scratch
     }
 }
 
@@ -278,12 +324,13 @@ impl Iterator for UnsignedShortRepeat {
 
     #[inline]
     fn size_hint(&self) -> (usize, Option<usize>) {
-        (self.remaining, Some(self.remaining))
+        (self.len(), Some(self.len()))
     }
 }
 
-pub struct SignedDeltaRun<'a> {
-    encoded_deltas: &'a [u8],
+#[derive(Debug)]
+pub struct SignedDeltaRun {
+    encoded_deltas: Vec<u8>,
     bit_width: u8,
     index: usize,
     length: usize,
@@ -291,33 +338,44 @@ pub struct SignedDeltaRun<'a> {
     delta_base: i64,
 }
 
-impl<'a> SignedDeltaRun<'a> {
+impl SignedDeltaRun {
     #[inline]
-    fn try_new(data: &mut &'a [u8]) -> Result<Self, Error> {
-        let header = data[0];
+    fn try_new<R: Read>(header: u8, reader: &mut R, mut scratch: Vec<u8>) -> Result<Self, Error> {
+        let mut header1 = [0u8];
+        reader.read_exact(&mut header1)?;
         let bit_width = header_to_rle_v2_delta_bit_width(header);
 
-        let length = header_to_rle_v2_direct_length(header, data[1]);
-        *data = &data[2..];
+        let length = header_to_rle_v2_direct_length(header, header1[0]);
 
-        let base = unsigned_varint(data).map(zigzag)?;
-        let delta_base = signed_varint(data)?;
-        let remaining = ((length as usize - 2) * bit_width as usize + 7) / 8;
-        let encoded_deltas = &data[..remaining];
-        *data = &data[remaining..];
+        let base = unsigned_varint(reader).map(zigzag)?;
+        let delta_base = signed_varint(reader)?;
+        let additional = ((length as usize - 2) * bit_width as usize + 7) / 8;
+
+        scratch.clear();
+        scratch.reserve(additional);
+        reader.take(additional as u64).read_to_end(&mut scratch)?;
 
         Ok(Self {
             base,
-            encoded_deltas,
+            encoded_deltas: scratch,
             bit_width,
             index: 0,
             length: length as usize,
             delta_base,
         })
     }
+
+    pub fn len(&self) -> usize {
+        self.length - self.index
+    }
+
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
 }
 
-impl<'a> Iterator for SignedDeltaRun<'a> {
+impl Iterator for SignedDeltaRun {
     type Item = i64;
 
     #[inline]
@@ -338,7 +396,7 @@ impl<'a> Iterator for SignedDeltaRun<'a> {
                 return self.base;
             }
             self.index += 1;
-            let delta = unpack(self.encoded_deltas, self.bit_width, index - 2);
+            let delta = unpack(&self.encoded_deltas, self.bit_width, index - 2);
             if self.delta_base > 0 {
                 self.base += delta as i64;
             } else {
@@ -361,8 +419,8 @@ pub enum IteratorEnum<I, II, III> {
     ShortRepeat(III),
 }
 
-fn run_encoding(data: &[u8]) -> EncodingTypeV2 {
-    let header = data[0];
+#[inline]
+fn run_encoding(header: u8) -> EncodingTypeV2 {
     match (header & 128 == 128, header & 64 == 64) {
         // 11... = 3
         (true, true) => EncodingTypeV2::Delta,
@@ -375,57 +433,94 @@ fn run_encoding(data: &[u8]) -> EncodingTypeV2 {
     }
 }
 
-pub enum UnsignedRleV2Run<'a> {
-    Direct(UnsignedDirectRun<'a>),
-    Delta(UnsignedDeltaRun<'a>),
+pub enum UnsignedRleV2Run {
+    Direct(UnsignedDirectRun),
+    Delta(UnsignedDeltaRun),
     ShortRepeat(UnsignedShortRepeat),
 }
 
-impl<'a> UnsignedRleV2Run<'a> {
-    pub fn try_new(data: &mut &'a [u8]) -> Result<Self, Error> {
-        let encoding = run_encoding(data);
+impl UnsignedRleV2Run {
+    pub fn try_new<R: Read>(reader: &mut R, scratch: Vec<u8>) -> Result<Self, Error> {
+        let mut header = [0u8];
+        reader.read_exact(&mut header)?;
+        let header = header[0];
+        let encoding = run_encoding(header);
 
-        Ok(match encoding {
-            EncodingTypeV2::Direct => Self::Direct(UnsignedDirectRun::new(data)),
-            EncodingTypeV2::Delta => Self::Delta(UnsignedDeltaRun::try_new(data)?),
-            EncodingTypeV2::ShortRepeat => Self::ShortRepeat(UnsignedShortRepeat::new(data)),
+        match encoding {
+            EncodingTypeV2::Direct => {
+                UnsignedDirectRun::try_new(header, reader, scratch).map(Self::Direct)
+            }
+            EncodingTypeV2::Delta => {
+                UnsignedDeltaRun::try_new(header, reader, scratch).map(Self::Delta)
+            }
+            EncodingTypeV2::ShortRepeat => {
+                UnsignedShortRepeat::try_new(header, reader, scratch).map(Self::ShortRepeat)
+            }
             other => todo!("{other:?}"),
-        })
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        match self {
+            Self::Direct(run) => run.len(),
+            Self::Delta(run) => run.len(),
+            Self::ShortRepeat(run) => run.len(),
+        }
+    }
+
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
     }
 }
 
-pub struct UnsignedRleV2Iter<'a> {
-    data: &'a [u8],
+pub struct UnsignedRleV2Iter<'a, R: Read> {
+    reader: &'a mut R,
+    scratch: Vec<u8>,
+    length: usize,
 }
 
-impl<'a> UnsignedRleV2Iter<'a> {
-    pub fn new(data: &'a [u8]) -> Self {
-        Self { data }
+impl<'a, R: Read> UnsignedRleV2Iter<'a, R> {
+    pub fn new(reader: &'a mut R, length: usize, scratch: Vec<u8>) -> Self {
+        Self {
+            reader,
+            scratch,
+            length,
+        }
     }
 }
 
-impl<'a> Iterator for UnsignedRleV2Iter<'a> {
-    type Item = Result<UnsignedRleV2Run<'a>, Error>;
+impl<'a, R: Read> Iterator for UnsignedRleV2Iter<'a, R> {
+    type Item = Result<UnsignedRleV2Run, Error>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        (!self.data.is_empty()).then(|| {
-            let stream = &mut self.data;
-            let run = UnsignedRleV2Run::try_new(stream);
-            self.data = *stream;
-            run
+        (self.length != 0).then(|| {
+            let run = UnsignedRleV2Run::try_new(self.reader, std::mem::take(&mut self.scratch))?;
+            self.length -= run.len();
+            Ok(run)
         })
     }
 }
 
-pub struct SignedDirectRun<'a>(UnsignedDirectRun<'a>);
+#[derive(Debug)]
+pub struct SignedDirectRun(UnsignedDirectRun);
 
-impl<'a> SignedDirectRun<'a> {
-    pub fn new(data: &mut &'a [u8]) -> Self {
-        Self(UnsignedDirectRun::new(data))
+impl SignedDirectRun {
+    pub fn try_new<R: Read>(header: u8, reader: &mut R, scratch: Vec<u8>) -> Result<Self, Error> {
+        UnsignedDirectRun::try_new(header, reader, scratch).map(Self)
+    }
+
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
     }
 }
 
-impl<'a> Iterator for SignedDirectRun<'a> {
+impl Iterator for SignedDirectRun {
     type Item = i64;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -437,11 +532,21 @@ impl<'a> Iterator for SignedDirectRun<'a> {
     }
 }
 
+#[derive(Debug)]
 pub struct SignedShortRepeat(UnsignedShortRepeat);
 
 impl SignedShortRepeat {
-    pub fn new(data: &mut &[u8]) -> Self {
-        Self(UnsignedShortRepeat::new(data))
+    pub fn try_new<R: Read>(header: u8, reader: &mut R, scratch: Vec<u8>) -> Result<Self, Error> {
+        UnsignedShortRepeat::try_new(header, reader, scratch).map(Self)
+    }
+
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
     }
 }
 
@@ -457,44 +562,73 @@ impl Iterator for SignedShortRepeat {
     }
 }
 
-pub enum SignedRleV2Run<'a> {
-    Direct(SignedDirectRun<'a>),
-    Delta(SignedDeltaRun<'a>),
+#[derive(Debug)]
+pub enum SignedRleV2Run {
+    Direct(SignedDirectRun),
+    Delta(SignedDeltaRun),
     ShortRepeat(SignedShortRepeat),
 }
 
-impl<'a> SignedRleV2Run<'a> {
-    pub fn try_new(data: &mut &'a [u8]) -> Result<Self, Error> {
-        let encoding = run_encoding(data);
+impl SignedRleV2Run {
+    pub fn try_new<R: Read>(reader: &mut R, scratch: Vec<u8>) -> Result<Self, Error> {
+        let mut header = [0u8];
+        reader.read_exact(&mut header)?;
+        let header = header[0];
+        let encoding = run_encoding(header);
 
-        Ok(match encoding {
-            EncodingTypeV2::Direct => Self::Direct(SignedDirectRun::new(data)),
-            EncodingTypeV2::Delta => Self::Delta(SignedDeltaRun::try_new(data)?),
-            EncodingTypeV2::ShortRepeat => Self::ShortRepeat(SignedShortRepeat::new(data)),
+        match encoding {
+            EncodingTypeV2::Direct => {
+                SignedDirectRun::try_new(header, reader, scratch).map(Self::Direct)
+            }
+            EncodingTypeV2::Delta => {
+                SignedDeltaRun::try_new(header, reader, scratch).map(Self::Delta)
+            }
+            EncodingTypeV2::ShortRepeat => {
+                SignedShortRepeat::try_new(header, reader, scratch).map(Self::ShortRepeat)
+            }
             other => todo!("{other:?}"),
-        })
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        match self {
+            Self::Direct(run) => run.len(),
+            Self::Delta(run) => run.len(),
+            Self::ShortRepeat(run) => run.len(),
+        }
+    }
+
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
     }
 }
 
-pub struct SignedRleV2Iter<'a> {
-    data: &'a [u8],
+pub struct SignedRleV2Iter<R: Read> {
+    reader: R,
+    scratch: Vec<u8>,
+    length: usize,
 }
 
-impl<'a> SignedRleV2Iter<'a> {
-    pub fn new(data: &'a [u8]) -> Self {
-        Self { data }
+impl<R: Read> SignedRleV2Iter<R> {
+    pub fn new(reader: R, length: usize, scratch: Vec<u8>) -> Self {
+        Self {
+            reader,
+            scratch,
+            length,
+        }
     }
 }
 
-impl<'a> Iterator for SignedRleV2Iter<'a> {
-    type Item = Result<SignedRleV2Run<'a>, Error>;
+impl<R: Read> Iterator for SignedRleV2Iter<R> {
+    type Item = Result<SignedRleV2Run, Error>;
 
+    #[inline]
     fn next(&mut self) -> Option<Self::Item> {
-        (!self.data.is_empty()).then(|| {
-            let stream = &mut self.data;
-            let run = SignedRleV2Run::try_new(stream);
-            self.data = *stream;
-            run
+        (self.length != 0).then(|| {
+            let run = SignedRleV2Run::try_new(&mut self.reader, std::mem::take(&mut self.scratch))?;
+            self.length -= run.len();
+            Ok(run)
         })
     }
 }
@@ -521,11 +655,10 @@ mod test {
         // [10000, 10000, 10000, 10000, 10000]
         let data: [u8; 3] = [0x0a, 0x27, 0x10];
 
-        let data = &mut data.as_ref();
-
-        let a = UnsignedShortRepeat::new(data).collect::<Vec<_>>();
+        let a = UnsignedShortRepeat::try_new(data[0], &mut &data[1..], vec![])
+            .unwrap()
+            .collect::<Vec<_>>();
         assert_eq!(a, vec![10000, 10000, 10000, 10000, 10000]);
-        assert_eq!(data, &[]);
     }
 
     #[test]
@@ -535,9 +668,10 @@ mod test {
 
         let data = &mut data.as_ref();
 
-        let a = UnsignedDirectRun::new(data).collect::<Vec<_>>();
+        let a = UnsignedDirectRun::try_new(data[0], &mut &data[1..], vec![])
+            .unwrap()
+            .collect::<Vec<_>>();
         assert_eq!(a, vec![23713, 43806, 57005, 48879]);
-        assert_eq!(data, &[]);
     }
 
     #[test]
@@ -550,8 +684,9 @@ mod test {
 
         let data = &mut data.as_ref();
 
-        let a = UnsignedDeltaRun::try_new(data).unwrap().collect::<Vec<_>>();
+        let a = UnsignedDeltaRun::try_new(data[0], &mut &data[1..], vec![])
+            .unwrap()
+            .collect::<Vec<_>>();
         assert_eq!(a, vec![2, 3, 5, 7, 11, 13, 17, 19, 23, 29]);
-        assert_eq!(data, &[]);
     }
 }

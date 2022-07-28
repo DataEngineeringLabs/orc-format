@@ -30,6 +30,8 @@ def _write(
         output,
         schema,
         dict_key_size_threshold=dict_key_size_threshold,
+        # use a small number to ensure that compression crosses value boundaries
+        compression_block_size=32,
         compression=compression,
     )
     num_rows = len(list(data.values())[0])
@@ -37,6 +39,10 @@ def _write(
         row = tuple(values[x] for values in data.values())
         writer.write(row)
     writer.close()
+
+    with open(file_name, "rb") as f:
+        reader = pyorc.Reader(f)
+        list(reader)
 
 
 _write(
