@@ -1,3 +1,4 @@
+//! Contains [`Decompressor`]
 use std::io::Read;
 
 use fallible_streaming_iterator::FallibleStreamingIterator;
@@ -91,6 +92,7 @@ impl<'a> FallibleStreamingIterator for DecompressorIter<'a> {
     }
 }
 
+/// A [`Read`]er fulfilling the ORC specification of reading compressed data.
 pub struct Decompressor<'a> {
     decompressor: DecompressorIter<'a>,
     offset: usize,
@@ -98,6 +100,7 @@ pub struct Decompressor<'a> {
 }
 
 impl<'a> Decompressor<'a> {
+    /// Creates a new [`Decompressor`] that will use `scratch` as a temporary region.
     pub fn new(stream: &'a [u8], compression: CompressionKind, scratch: Vec<u8>) -> Self {
         Self {
             decompressor: DecompressorIter::new(stream, compression, scratch),
@@ -106,6 +109,7 @@ impl<'a> Decompressor<'a> {
         }
     }
 
+    /// Returns the internal memory region, so it can be re-used
     pub fn into_inner(self) -> Vec<u8> {
         self.decompressor.into_inner()
     }

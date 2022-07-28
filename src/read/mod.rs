@@ -5,7 +5,6 @@
 //! 2. Read the stripe (or part of it in projection pushdown)
 //! 3. For each column, select the relevant region of the stripe
 //! 4. Attach an Iterator to the region
-#![forbid(unsafe_code)]
 
 use std::io::{Read, Seek, SeekFrom};
 
