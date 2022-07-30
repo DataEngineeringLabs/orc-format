@@ -71,9 +71,9 @@ impl Column {
         self.number_of_rows as usize
     }
 
-    /// Returns the underlying scratch containing a pre-allocated memory region
+    /// Returns the underlying footer and the pre-allocated memory region
     /// containing all (compressed) streams of this column.
-    pub fn into_inner(self) -> Vec<u8> {
-        self.data
+    pub fn into_inner(self) -> (StripeFooter, Vec<u8>) {
+        (self.footer, self.data)
     }
 }

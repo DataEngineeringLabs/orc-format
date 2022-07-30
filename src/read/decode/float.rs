@@ -31,16 +31,16 @@ impl Float for f64 {
 }
 
 /// An iterator
-pub struct FloatIter<'a, T: Float, R: std::io::Read> {
-    reader: &'a mut R,
+pub struct FloatIter<T: Float, R: std::io::Read> {
+    reader: R,
     remaining: usize,
     phantom: std::marker::PhantomData<T>,
 }
 
-impl<'a, T: Float, R: std::io::Read> FloatIter<'a, T, R> {
+impl<T: Float, R: std::io::Read> FloatIter<T, R> {
     /// Returns a new [`FloatIter`]
     #[inline]
-    pub fn new(reader: &'a mut R, length: usize) -> Self {
+    pub fn new(reader: R, length: usize) -> Self {
         Self {
             reader,
             remaining: length,
@@ -59,9 +59,14 @@ impl<'a, T: Float, R: std::io::Read> FloatIter<'a, T, R> {
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
+
+    /// Returns its internal reader
+    pub fn into_inner(self) -> R {
+        self.reader
+    }
 }
 
-impl<'a, T: Float, R: std::io::Read> Iterator for FloatIter<'a, T, R> {
+impl<T: Float, R: std::io::Read> Iterator for FloatIter<T, R> {
     type Item = Result<T, Error>;
 
     #[inline]

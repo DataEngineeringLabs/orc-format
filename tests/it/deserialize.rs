@@ -3,7 +3,8 @@ use orc_format::{
     proto::{column_encoding::Kind as ColumnEncodingKind, stream::Kind},
     read,
     read::decode::{
-        BooleanIter, SignedRleV2Iter, SignedRleV2Run, UnsignedRleV2Iter, UnsignedRleV2Run,
+        BooleanIter, SignedRleV2Iter, SignedRleV2Run, SignedRleV2RunIter, UnsignedRleV2Run,
+        UnsignedRleV2RunIter,
     },
     read::decompress::Decompressor,
     read::Column,
@@ -28,15 +29,18 @@ pub fn deserialize_f32_array(column: &Column) -> Result<(Vec<bool>, Vec<f32>), E
 
     let validity = deserialize_validity(column, &mut scratch)?;
 
-    let mut reader = column.get_stream(Kind::Data, scratch)?;
+    let reader = column.get_stream(Kind::Data, scratch)?;
 
     let num_of_values: usize = validity.iter().map(|x| *x as usize).sum();
 
     let mut valid_values = Vec::with_capacity(num_of_values);
-    read::decode::FloatIter::<f32, _>::new(&mut reader, num_of_values).try_for_each(|item| {
+    let mut iter = read::decode::FloatIter::<f32, _>::new(reader, num_of_values);
+    iter.try_for_each(|item| {
         valid_values.push(item?);
         Result::<(), Error>::Ok(())
     })?;
+
+    let _ = iter.into_inner();
 
     Ok((validity, valid_values))
 }
@@ -52,13 +56,27 @@ pub fn deserialize_int_array(column: &Column) -> Result<(Vec<bool>, Vec<i64>), E
 
     let mut valid_values = Vec::with_capacity(num_of_values);
 
-    SignedRleV2Iter::new(reader, num_of_values, vec![]).try_for_each(|run| {
+    let mut iter = SignedRleV2RunIter::new(reader, num_of_values, vec![]);
+
+    iter.try_for_each(|run| {
         run.map(|run| match run {
             SignedRleV2Run::Direct(values) => valid_values.extend(values),
             SignedRleV2Run::Delta(values) => valid_values.extend(values),
             SignedRleV2Run::ShortRepeat(values) => valid_values.extend(values),
         })
     })?;
+
+    let (_, _) = iter.into_inner();
+
+    // test the other iterator
+    let reader = column.get_stream(Kind::Data, vec![])?;
+
+    let mut valid_values1 = Vec::with_capacity(num_of_values);
+    SignedRleV2Iter::new(reader, num_of_values, vec![]).try_for_each(|item| {
+        valid_values1.push(item?);
+        Result::<(), Error>::Ok(())
+    })?;
+    assert_eq!(valid_values1, valid_values);
 
     Ok((validity, valid_values))
 }
@@ -70,25 +88,29 @@ pub fn deserialize_bool_array(column: &Column) -> Result<(Vec<bool>, Vec<bool>),
 
     let num_of_values: usize = validity.iter().map(|x| *x as usize).sum();
 
-    let mut reader = column.get_stream(Kind::Data, std::mem::take(&mut scratch))?;
+    let reader = column.get_stream(Kind::Data, std::mem::take(&mut scratch))?;
 
     let mut valid_values = Vec::with_capacity(num_of_values);
-    BooleanIter::new(&mut reader, num_of_values).try_for_each(|item| {
+
+    let mut iter = BooleanIter::new(reader, num_of_values);
+    iter.try_for_each(|item| {
         valid_values.push(item?);
         Result::<(), Error>::Ok(())
     })?;
+
+    let _ = iter.into_inner();
 
     Ok((validity, valid_values))
 }
 
 pub fn deserialize_str(
-    lengths: UnsignedRleV2Iter<Decompressor>,
+    mut lengths: UnsignedRleV2RunIter<Decompressor>,
     values: &mut read::decode::Values<Decompressor>,
     num_of_values: usize,
 ) -> Result<Vec<String>, Error> {
     let mut result = Vec::with_capacity(num_of_values);
 
-    for run in lengths {
+    for run in lengths.by_ref() {
         let f = |length| {
             values.next(length as usize).and_then(|x| {
                 std::str::from_utf8(x)
@@ -111,6 +133,9 @@ pub fn deserialize_str(
             }),
         }?
     }
+
+    let (_, _) = lengths.into_inner();
+
     Ok(result)
 }
 
@@ -124,20 +149,20 @@ pub fn deserialize_str_dict_array(
     let mut values_iter = read::decode::Values::new(values, vec![]);
 
     let scratch2 = vec![];
-    let mut lengths = column.get_stream(Kind::Length, scratch2)?;
+    let lengths = column.get_stream(Kind::Length, scratch2)?;
 
-    let lengths = UnsignedRleV2Iter::new(&mut lengths, column.dictionary_size().unwrap(), vec![]);
+    let lengths = UnsignedRleV2RunIter::new(lengths, column.dictionary_size().unwrap(), vec![]);
 
     let values = deserialize_str(lengths, &mut values_iter, 0)?;
     let scratch = values_iter.into_inner();
 
-    let mut indices = column.get_stream(Kind::Data, scratch)?;
-    let indices = UnsignedRleV2Iter::new(&mut indices, column.number_of_rows(), vec![]);
+    let indices = column.get_stream(Kind::Data, scratch)?;
+    let mut indices = UnsignedRleV2RunIter::new(indices, column.number_of_rows(), vec![]);
 
     let f = |x| values.get(x as usize).cloned().ok_or(Error::OutOfSpec);
 
     let mut result = Vec::with_capacity(num_of_values);
-    for run in indices {
+    for run in indices.by_ref() {
         run.and_then(|run| match run {
             UnsignedRleV2Run::Direct(values) => values.map(f).try_for_each(|x| {
                 result.push(x?);
@@ -154,6 +179,8 @@ pub fn deserialize_str_dict_array(
         })?;
     }
 
+    let (_, _) = indices.into_inner();
+
     Ok(result)
 }
 
@@ -167,8 +194,8 @@ fn deserialize_str_array_direct(
     let mut values = read::decode::Values::new(values, vec![]);
 
     let scratch1 = vec![];
-    let mut lengths = column.get_stream(Kind::Length, scratch1)?;
-    let lengths = UnsignedRleV2Iter::new(&mut lengths, num_of_values, vec![]);
+    let lengths = column.get_stream(Kind::Length, scratch1)?;
+    let lengths = UnsignedRleV2RunIter::new(lengths, num_of_values, vec![]);
 
     deserialize_str(lengths, &mut values, num_of_values)
 }

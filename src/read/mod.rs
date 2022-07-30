@@ -12,14 +12,12 @@ use prost::Message;
 
 use crate::error::Error;
 use crate::proto::stream::Kind;
-use crate::proto::{
-    CompressionKind, Footer, Metadata, PostScript, StripeFooter, StripeInformation,
-};
+use crate::proto::{CompressionKind, Footer, Metadata, PostScript, StripeFooter};
 
+mod column;
 pub mod decode;
 pub mod decompress;
-mod stripe;
-pub use stripe::Column;
+pub use column::Column;
 
 const DEFAULT_FOOTER_SIZE: u64 = 16 * 1024;
 
@@ -96,10 +94,12 @@ where
 /// This function is guaranteed to perform exactly one seek and one read to `reader`.
 pub fn read_stripe_footer<R: Read + Seek>(
     reader: &mut R,
-    stripe: &StripeInformation,
-    compression: CompressionKind,
+    metadata: &FileMetadata,
+    stripe: usize,
     scratch: &mut Vec<u8>,
 ) -> Result<StripeFooter, Error> {
+    let stripe = &metadata.footer.stripes[stripe];
+
     let start = stripe.offset() + stripe.index_length() + stripe.data_length();
     let len = stripe.footer_length();
     reader.seek(SeekFrom::Start(start))?;
@@ -107,7 +107,7 @@ pub fn read_stripe_footer<R: Read + Seek>(
     scratch.clear();
     scratch.reserve(len as usize);
     reader.take(len).read_to_end(scratch)?;
-    deserialize_stripe_footer(scratch, compression)
+    deserialize_stripe_footer(scratch, metadata.postscript.compression())
 }
 
 /// Reads `column` from the stripe into a [`Column`].
@@ -116,12 +116,14 @@ pub fn read_stripe_footer<R: Read + Seek>(
 /// This function is guaranteed to perform exactly one seek and one read to `reader`.
 pub fn read_stripe_column<R: Read + Seek>(
     reader: &mut R,
-    stripe: &StripeInformation,
+    metadata: &FileMetadata,
+    stripe: usize,
     footer: StripeFooter,
-    compression: CompressionKind,
     column: u32,
     mut scratch: Vec<u8>,
 ) -> Result<Column, Error> {
+    let stripe = &metadata.footer.stripes[stripe];
+
     let mut start = 0; // the start of the stream
 
     let start = footer
@@ -152,7 +154,7 @@ pub fn read_stripe_column<R: Read + Seek>(
         column,
         stripe.number_of_rows(),
         footer,
-        compression,
+        metadata.postscript.compression(),
     ))
 }
 

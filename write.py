@@ -15,7 +15,36 @@ data = {
     "int_neg_delta": [5, 4, None, 2, 1],
     "int_direct": [1, 6, None, 3, 2],
     "int_neg_direct": [-1, -6, None, -3, -2],
+    "bigint_direct": [1, 6, None, 3, 2],
+    "bigint_neg_direct": [-1, -6, None, -3, -2],
+    "bigint_other": [5, -5, 1, 5, 5],
+    "utf8_increase": ["a", "bb", "ccc", "dddd", "eeeee"],
+    "utf8_decrease": ["eeeee", "dddd", "ccc", "bb", "a"],
 }
+
+def infer_schema(data):
+    schema = "struct<"
+    for key, value in data.items():
+        dt = type(value[0])
+        if dt == float:
+            dt = "float"
+        elif dt == int:
+            dt = "int"
+        elif dt == bool:
+            dt = "boolean"
+        elif dt == str:
+            dt = "string"
+        else:
+            raise NotImplementedError
+        if key.startswith("double"):
+            dt = "double"
+        if key.startswith("bigint"):
+            dt = "bigint"
+        schema += key + ":" + dt + ","
+
+    schema = schema[:-1] + ">"
+    return schema
+
 
 
 def _write(
@@ -46,7 +75,7 @@ def _write(
 
 
 _write(
-    "struct<a:float,b:boolean,str_direct:string,d:string,e:string,f:string,int_short_repeated:int,int_neg_short_repeated:int,int_delta:int,int_neg_delta:int,int_direct:int,int_neg_direct:int>",
+    infer_schema(data),
     data,
     "test.orc",
 )

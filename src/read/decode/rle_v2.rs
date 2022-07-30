@@ -244,7 +244,7 @@ impl Iterator for UnsignedDeltaRun {
                 self.index += 1;
                 return self.base;
             }
-            if index == 1 {
+            if index == 1 || self.bit_width == 0 {
                 self.index += 1;
                 if self.delta_base > 0 {
                     self.base += self.delta_base as u64;
@@ -386,7 +386,7 @@ impl Iterator for SignedDeltaRun {
                 self.index += 1;
                 return self.base;
             }
-            if index == 1 {
+            if index == 1 || self.bit_width == 0 {
                 self.index += 1;
                 if self.delta_base > 0 {
                     self.base += self.delta_base as i64;
@@ -396,6 +396,7 @@ impl Iterator for SignedDeltaRun {
                 return self.base;
             }
             self.index += 1;
+            // edge case where `bit_width == 0`, where deltas are equal to base delta
             let delta = unpack(&self.encoded_deltas, self.bit_width, index - 2);
             if self.delta_base > 0 {
                 self.base += delta as i64;
@@ -476,32 +477,87 @@ impl UnsignedRleV2Run {
 }
 
 /// A fallible [`Iterator`] of [`UnsignedRleV2Run`].
-pub struct UnsignedRleV2Iter<'a, R: Read> {
-    reader: &'a mut R,
+pub struct UnsignedRleV2RunIter<R: Read> {
+    reader: R,
     scratch: Vec<u8>,
     length: usize,
 }
 
-impl<'a, R: Read> UnsignedRleV2Iter<'a, R> {
-    /// Returns a new [`UnsignedRleV2Iter`].
-    pub fn new(reader: &'a mut R, length: usize, scratch: Vec<u8>) -> Self {
+impl<R: Read> UnsignedRleV2RunIter<R> {
+    /// Returns a new [`UnsignedRleV2RunIter`].
+    pub fn new(reader: R, length: usize, scratch: Vec<u8>) -> Self {
         Self {
             reader,
             scratch,
             length,
         }
     }
+
+    /// Returns its internal buffer
+    pub fn into_inner(mut self) -> (R, Vec<u8>) {
+        self.scratch.clear();
+        (self.reader, self.scratch)
+    }
 }
 
-impl<'a, R: Read> Iterator for UnsignedRleV2Iter<'a, R> {
+impl<R: Read> Iterator for UnsignedRleV2RunIter<R> {
     type Item = Result<UnsignedRleV2Run, Error>;
 
     fn next(&mut self) -> Option<Self::Item> {
         (self.length != 0).then(|| {
-            let run = UnsignedRleV2Run::try_new(self.reader, std::mem::take(&mut self.scratch))?;
+            let run =
+                UnsignedRleV2Run::try_new(&mut self.reader, std::mem::take(&mut self.scratch))?;
             self.length -= run.len();
             Ok(run)
         })
+    }
+}
+
+/// A fallible [`Iterator`] of [`i64`].
+pub struct UnsignedRleV2Iter<R: Read> {
+    current: Option<UnsignedRleV2Run>,
+    runs: UnsignedRleV2RunIter<R>,
+}
+
+impl<R: Read> UnsignedRleV2Iter<R> {
+    /// Returns a new [`SignedRleV2Iter`].
+    pub fn new(reader: R, length: usize, scratch: Vec<u8>) -> Self {
+        Self {
+            runs: UnsignedRleV2RunIter::new(reader, length, scratch),
+            current: None,
+        }
+    }
+
+    /// Returns its internal buffer
+    pub fn into_inner(self) -> (R, Vec<u8>) {
+        self.runs.into_inner()
+    }
+}
+
+impl<R: Read> Iterator for UnsignedRleV2Iter<R> {
+    type Item = Result<u64, Error>;
+
+    #[inline]
+    fn next(&mut self) -> Option<Self::Item> {
+        let next = if let Some(run) = &mut self.current {
+            match run {
+                UnsignedRleV2Run::Direct(values_iter) => values_iter.next(),
+                UnsignedRleV2Run::Delta(values_iter) => values_iter.next(),
+                UnsignedRleV2Run::ShortRepeat(values_iter) => values_iter.next(),
+            }
+        } else {
+            None
+        };
+
+        if next.is_none() {
+            match self.runs.next()? {
+                Ok(run) => self.current = Some(run),
+                Err(e) => return Some(Err(e)),
+            }
+            self.next()
+        } else {
+            next.map(Ok)
+        }
     }
 }
 
@@ -618,14 +674,14 @@ impl SignedRleV2Run {
 }
 
 /// A fallible [`Iterator`] of [`SignedRleV2Run`].
-pub struct SignedRleV2Iter<R: Read> {
+pub struct SignedRleV2RunIter<R: Read> {
     reader: R,
     scratch: Vec<u8>,
     length: usize,
 }
 
-impl<R: Read> SignedRleV2Iter<R> {
-    /// Returns a new [`SignedRleV2Iter`].
+impl<R: Read> SignedRleV2RunIter<R> {
+    /// Returns a new [`SignedRleV2RunIter`].
     pub fn new(reader: R, length: usize, scratch: Vec<u8>) -> Self {
         Self {
             reader,
@@ -633,9 +689,14 @@ impl<R: Read> SignedRleV2Iter<R> {
             length,
         }
     }
+
+    pub fn into_inner(mut self) -> (R, Vec<u8>) {
+        self.scratch.clear();
+        (self.reader, self.scratch)
+    }
 }
 
-impl<R: Read> Iterator for SignedRleV2Iter<R> {
+impl<R: Read> Iterator for SignedRleV2RunIter<R> {
     type Item = Result<SignedRleV2Run, Error>;
 
     #[inline]
@@ -645,6 +706,54 @@ impl<R: Read> Iterator for SignedRleV2Iter<R> {
             self.length -= run.len();
             Ok(run)
         })
+    }
+}
+
+/// A fallible [`Iterator`] of [`i64`].
+pub struct SignedRleV2Iter<R: Read> {
+    current: Option<SignedRleV2Run>,
+    runs: SignedRleV2RunIter<R>,
+}
+
+impl<R: Read> SignedRleV2Iter<R> {
+    /// Returns a new [`SignedRleV2Iter`].
+    pub fn new(reader: R, length: usize, scratch: Vec<u8>) -> Self {
+        Self {
+            runs: SignedRleV2RunIter::new(reader, length, scratch),
+            current: None,
+        }
+    }
+
+    /// Returns its internal buffer
+    pub fn into_inner(self) -> (R, Vec<u8>) {
+        self.runs.into_inner()
+    }
+}
+
+impl<R: Read> Iterator for SignedRleV2Iter<R> {
+    type Item = Result<i64, Error>;
+
+    #[inline]
+    fn next(&mut self) -> Option<Self::Item> {
+        let next = if let Some(run) = &mut self.current {
+            match run {
+                SignedRleV2Run::Direct(values_iter) => values_iter.next(),
+                SignedRleV2Run::Delta(values_iter) => values_iter.next(),
+                SignedRleV2Run::ShortRepeat(values_iter) => values_iter.next(),
+            }
+        } else {
+            None
+        };
+
+        if next.is_none() {
+            match self.runs.next()? {
+                Ok(run) => self.current = Some(run),
+                Err(e) => return Some(Err(e)),
+            }
+            self.next()
+        } else {
+            next.map(Ok)
+        }
     }
 }
 

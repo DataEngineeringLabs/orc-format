@@ -12,17 +12,15 @@ fn get_column(path: &str, column: u32) -> Result<Column, Error> {
 
     // read the files' metadata
     let metadata = read::read_metadata(&mut f)?;
-    // and copy the compression it is using
-    let compression = metadata.postscript.compression();
 
     // the next step is to identify which stripe we want to read. Let's say it is the first one.
-    let stripe = &metadata.footer.stripes[0];
+    let stripe = 0;
 
     // Each stripe has a footer - we need to read it to extract the location of each column on it.
-    let stripe_footer = read::read_stripe_footer(&mut f, stripe, compression, &mut vec![])?;
+    let stripe_footer = read::read_stripe_footer(&mut f, &metadata, stripe, &mut vec![])?;
 
     // Finally, we read the column into `Column`
-    read::read_stripe_column(&mut f, stripe, stripe_footer, compression, column, vec![])
+    read::read_stripe_column(&mut f, &metadata, stripe, stripe_footer, column, vec![])
 }
 
 #[test]
@@ -32,6 +30,8 @@ fn read_bool() -> Result<(), Error> {
     let (a, b) = deserialize_bool_array(&column)?;
     assert_eq!(a, vec![true, true, false, true, true]);
     assert_eq!(b, vec![true, false, true, false]);
+
+    let (_footer, _scratch) = column.into_inner();
     Ok(())
 }
 
@@ -137,11 +137,41 @@ fn read_int_direct() -> Result<(), Error> {
 
 #[test]
 fn read_int_neg_direct() -> Result<(), Error> {
-    let column = get_column("test.orc", 11)?;
+    let column = get_column("test.orc", 12)?;
+
+    let (a, b) = deserialize_int_array(&column)?;
+    assert_eq!(a, vec![true, true, false, true, true]);
+    assert_eq!(b, vec![-1, -6, -3, -2]);
+    Ok(())
+}
+
+#[test]
+fn read_bigint_direct() -> Result<(), Error> {
+    let column = get_column("test.orc", 13)?;
 
     let (a, b) = deserialize_int_array(&column)?;
     assert_eq!(a, vec![true, true, false, true, true]);
     assert_eq!(b, vec![1, 6, 3, 2]);
+    Ok(())
+}
+
+#[test]
+fn read_bigint_neg_direct() -> Result<(), Error> {
+    let column = get_column("test.orc", 14)?;
+
+    let (a, b) = deserialize_int_array(&column)?;
+    assert_eq!(a, vec![true, true, false, true, true]);
+    assert_eq!(b, vec![-1, -6, -3, -2]);
+    Ok(())
+}
+
+#[test]
+fn read_bigint_other() -> Result<(), Error> {
+    let column = get_column("test.orc", 15)?;
+
+    let (a, b) = deserialize_int_array(&column)?;
+    assert_eq!(a, vec![true, true, true, true, true]);
+    assert_eq!(b, vec![5, -5, 1, 5, 5]);
     Ok(())
 }
 
@@ -262,5 +292,25 @@ fn read_f32_long_long_gzip() -> Result<(), Error> {
     assert_eq!(a.len(), 1_000_000);
     assert_eq!(a, vec![true; 1_000_000]);
     assert_eq!(b.len(), 1_000_000);
+    Ok(())
+}
+
+#[test]
+fn read_string_increase() -> Result<(), Error> {
+    let column = get_column("test.orc", 16)?;
+
+    let (a, b) = deserialize_str_array(&column)?;
+    assert_eq!(a, vec![true; 5]);
+    assert_eq!(b, vec!["a", "bb", "ccc", "dddd", "eeeee"]);
+    Ok(())
+}
+
+#[test]
+fn read_string_decrease() -> Result<(), Error> {
+    let column = get_column("test.orc", 17)?;
+
+    let (a, b) = deserialize_str_array(&column)?;
+    assert_eq!(a, vec![true; 5]);
+    assert_eq!(b, vec!["eeeee", "dddd", "ccc", "bb", "a"]);
     Ok(())
 }

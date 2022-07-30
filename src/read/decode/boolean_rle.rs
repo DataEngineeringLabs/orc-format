@@ -11,13 +11,17 @@ pub enum BooleanRun {
     Literals([u8; 255]),
 }
 
-pub struct BooleanRleRunIter<'a, R: Read> {
-    reader: &'a mut R,
+pub struct BooleanRleRunIter<R: Read> {
+    reader: R,
 }
 
-impl<'a, R: Read> BooleanRleRunIter<'a, R> {
-    pub fn new(reader: &'a mut R) -> Self {
+impl<R: Read> BooleanRleRunIter<R> {
+    pub fn new(reader: R) -> Self {
         Self { reader }
+    }
+
+    pub fn into_inner(self) -> R {
+        self.reader
     }
 }
 
@@ -33,22 +37,22 @@ fn read_literals<R: Read>(reader: &mut R, header: i8) -> Result<[u8; 255], Error
     Ok(literals)
 }
 
-impl<'a, R: Read> Iterator for BooleanRleRunIter<'a, R> {
+impl<R: Read> Iterator for BooleanRleRunIter<R> {
     type Item = Result<BooleanRun, Error>;
 
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
-        let header = read_u8(self.reader);
+        let header = read_u8(&mut self.reader);
         let header = match header {
             Ok(header) => header as i8,
             Err(e) => return Some(Err(e.into())),
         };
         if header < 0 {
-            Some(read_literals(self.reader, header).map(BooleanRun::Literals))
+            Some(read_literals(&mut self.reader, header).map(BooleanRun::Literals))
         } else {
             let length = header as u16 + 3;
             // this is not ok - it may require more than one byte
-            let value = read_u8(self.reader);
+            let value = read_u8(&mut self.reader);
             let value = match value {
                 Ok(value) => value,
                 Err(e) => return Some(Err(e.into())),
@@ -58,16 +62,16 @@ impl<'a, R: Read> Iterator for BooleanRleRunIter<'a, R> {
     }
 }
 
-pub struct BooleanIter<'a, R: Read> {
-    iter: BooleanRleRunIter<'a, R>,
+pub struct BooleanIter<R: Read> {
+    iter: BooleanRleRunIter<R>,
     current: Option<BooleanRun>,
     position: u8,
     byte_position: usize,
     remaining: usize,
 }
 
-impl<'a, R: Read> BooleanIter<'a, R> {
-    pub fn new(reader: &'a mut R, length: usize) -> Self {
+impl<'a, R: Read> BooleanIter<R> {
+    pub fn new(reader: R, length: usize) -> Self {
         Self {
             iter: BooleanRleRunIter::new(reader),
             current: None,
@@ -76,9 +80,13 @@ impl<'a, R: Read> BooleanIter<'a, R> {
             remaining: length,
         }
     }
+
+    pub fn into_inner(self) -> R {
+        self.iter.into_inner()
+    }
 }
 
-impl<'a, R: Read> Iterator for BooleanIter<'a, R> {
+impl<R: Read> Iterator for BooleanIter<R> {
     type Item = Result<bool, Error>;
 
     #[inline]
