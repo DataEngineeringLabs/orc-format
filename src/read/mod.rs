@@ -14,10 +14,10 @@ use crate::error::Error;
 use crate::proto::stream::Kind;
 use crate::proto::{CompressionKind, Footer, Metadata, PostScript, StripeFooter};
 
+mod column;
 pub mod decode;
 pub mod decompress;
-mod stripe;
-pub use stripe::Column;
+pub use column::Column;
 
 const DEFAULT_FOOTER_SIZE: u64 = 16 * 1024;
 
