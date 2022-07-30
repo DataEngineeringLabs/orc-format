@@ -10,24 +10,22 @@ use std::fs::File;
 use orc_format::{error::Error, read, read::Column};
 
 
-fn get_stripe(path: &str, column: u32) -> Result<Column, Error> {
+fn get_column(path: &str, column: u32) -> Result<Column, Error> {
     // open the file, as expected. buffering this is not necessary - we
     // are very careful about the number of `read`s we perform.
     let mut f = File::open(path).expect("no file found");
 
     // read the files' metadata
     let metadata = read::read_metadata(&mut f)?;
-    // and copy the compression it is using
-    let compression = metadata.postscript.compression();
 
     // the next step is to identify which stripe we want to read. Let's say it is the first one.
-    let stripe = &metadata.footer.stripes[0];
+    let stripe = 0;
 
     // Each stripe has a footer - we need to read it to extract the location of each column on it.
-    let stripe_footer = read::read_stripe_footer(&mut f, stripe, compression, &mut vec![])?;
+    let stripe_footer = read::read_stripe_footer(&mut f, &metadata, stripe, &mut vec![])?;
 
     // Finally, we read the column into `Column`
-    read::read_stripe_column(&mut f, stripe, stripe_footer, compression, column, vec![])
+    read::read_stripe_column(&mut f, &metadata, stripe, stripe_footer, column, vec![])
 }
 ```
 
