@@ -494,9 +494,9 @@ impl<R: Read> UnsignedRleV2RunIter<R> {
     }
 
     /// Returns its internal buffer
-    pub fn into_inner(mut self) -> Vec<u8> {
+    pub fn into_inner(mut self) -> (R, Vec<u8>) {
         self.scratch.clear();
-        self.scratch
+        (self.reader, self.scratch)
     }
 }
 
@@ -529,7 +529,7 @@ impl<R: Read> UnsignedRleV2Iter<R> {
     }
 
     /// Returns its internal buffer
-    pub fn into_inner(self) -> Vec<u8> {
+    pub fn into_inner(self) -> (R, Vec<u8>) {
         self.runs.into_inner()
     }
 }
@@ -690,9 +690,9 @@ impl<R: Read> SignedRleV2RunIter<R> {
         }
     }
 
-    pub fn into_inner(mut self) -> Vec<u8> {
+    pub fn into_inner(mut self) -> (R, Vec<u8>) {
         self.scratch.clear();
-        self.scratch
+        (self.reader, self.scratch)
     }
 }
 
@@ -725,7 +725,7 @@ impl<R: Read> SignedRleV2Iter<R> {
     }
 
     /// Returns its internal buffer
-    pub fn into_inner(self) -> Vec<u8> {
+    pub fn into_inner(self) -> (R, Vec<u8>) {
         self.runs.into_inner()
     }
 }
