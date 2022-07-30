@@ -30,6 +30,8 @@ fn read_bool() -> Result<(), Error> {
     let (a, b) = deserialize_bool_array(&column)?;
     assert_eq!(a, vec![true, true, false, true, true]);
     assert_eq!(b, vec![true, false, true, false]);
+
+    let (_footer, _scratch) = column.into_inner();
     Ok(())
 }
 

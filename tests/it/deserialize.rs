@@ -156,8 +156,8 @@ pub fn deserialize_str_dict_array(
     let values = deserialize_str(lengths, &mut values_iter, 0)?;
     let scratch = values_iter.into_inner();
 
-    let mut indices = column.get_stream(Kind::Data, scratch)?;
-    let mut indices = UnsignedRleV2RunIter::new(&mut indices, column.number_of_rows(), vec![]);
+    let indices = column.get_stream(Kind::Data, scratch)?;
+    let mut indices = UnsignedRleV2RunIter::new(indices, column.number_of_rows(), vec![]);
 
     let f = |x| values.get(x as usize).cloned().ok_or(Error::OutOfSpec);
 
