@@ -135,11 +135,41 @@ fn read_int_direct() -> Result<(), Error> {
 
 #[test]
 fn read_int_neg_direct() -> Result<(), Error> {
-    let column = get_column("test.orc", 11)?;
+    let column = get_column("test.orc", 12)?;
+
+    let (a, b) = deserialize_int_array(&column)?;
+    assert_eq!(a, vec![true, true, false, true, true]);
+    assert_eq!(b, vec![-1, -6, -3, -2]);
+    Ok(())
+}
+
+#[test]
+fn read_bigint_direct() -> Result<(), Error> {
+    let column = get_column("test.orc", 13)?;
 
     let (a, b) = deserialize_int_array(&column)?;
     assert_eq!(a, vec![true, true, false, true, true]);
     assert_eq!(b, vec![1, 6, 3, 2]);
+    Ok(())
+}
+
+#[test]
+fn read_bigint_neg_direct() -> Result<(), Error> {
+    let column = get_column("test.orc", 14)?;
+
+    let (a, b) = deserialize_int_array(&column)?;
+    assert_eq!(a, vec![true, true, false, true, true]);
+    assert_eq!(b, vec![-1, -6, -3, -2]);
+    Ok(())
+}
+
+#[test]
+fn read_bigint_other() -> Result<(), Error> {
+    let column = get_column("test.orc", 15)?;
+
+    let (a, b) = deserialize_int_array(&column)?;
+    assert_eq!(a, vec![true, true, true, true, true]);
+    assert_eq!(b, vec![5, -5, 1, 5, 5]);
     Ok(())
 }
 

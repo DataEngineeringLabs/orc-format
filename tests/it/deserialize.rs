@@ -3,7 +3,8 @@ use orc_format::{
     proto::{column_encoding::Kind as ColumnEncodingKind, stream::Kind},
     read,
     read::decode::{
-        BooleanIter, SignedRleV2Run, SignedRleV2RunIter, UnsignedRleV2Run, UnsignedRleV2RunIter,
+        BooleanIter, SignedRleV2Iter, SignedRleV2Run, SignedRleV2RunIter, UnsignedRleV2Run,
+        UnsignedRleV2RunIter,
     },
     read::decompress::Decompressor,
     read::Column,
@@ -59,6 +60,16 @@ pub fn deserialize_int_array(column: &Column) -> Result<(Vec<bool>, Vec<i64>), E
             SignedRleV2Run::ShortRepeat(values) => valid_values.extend(values),
         })
     })?;
+
+    // test the other iterator
+    let reader = column.get_stream(Kind::Data, vec![])?;
+
+    let mut valid_values1 = Vec::with_capacity(num_of_values);
+    SignedRleV2Iter::new(reader, num_of_values, vec![]).try_for_each(|item| {
+        valid_values1.push(item?);
+        Result::<(), Error>::Ok(())
+    })?;
+    assert_eq!(valid_values1, valid_values);
 
     Ok((validity, valid_values))
 }
