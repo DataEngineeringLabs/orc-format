@@ -292,3 +292,23 @@ fn read_f32_long_long_gzip() -> Result<(), Error> {
     assert_eq!(b.len(), 1_000_000);
     Ok(())
 }
+
+#[test]
+fn read_string_increase() -> Result<(), Error> {
+    let column = get_column("test.orc", 16)?;
+
+    let (a, b) = deserialize_str_array(&column)?;
+    assert_eq!(a, vec![true; 5]);
+    assert_eq!(b, vec!["a", "bb", "ccc", "dddd", "eeeee"]);
+    Ok(())
+}
+
+#[test]
+fn read_string_decrease() -> Result<(), Error> {
+    let column = get_column("test.orc", 17)?;
+
+    let (a, b) = deserialize_str_array(&column)?;
+    assert_eq!(a, vec![true; 5]);
+    assert_eq!(b, vec!["eeeee", "dddd", "ccc", "bb", "a"]);
+    Ok(())
+}

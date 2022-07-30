@@ -18,6 +18,8 @@ data = {
     "bigint_direct": [1, 6, None, 3, 2],
     "bigint_neg_direct": [-1, -6, None, -3, -2],
     "bigint_other": [5, -5, 1, 5, 5],
+    "utf8_increase": ["a", "bb", "ccc", "dddd", "eeeee"],
+    "utf8_decrease": ["eeeee", "dddd", "ccc", "bb", "a"],
 }
 
 def infer_schema(data):

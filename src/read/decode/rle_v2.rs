@@ -244,7 +244,7 @@ impl Iterator for UnsignedDeltaRun {
                 self.index += 1;
                 return self.base;
             }
-            if index == 1 {
+            if index == 1 || self.bit_width == 0 {
                 self.index += 1;
                 if self.delta_base > 0 {
                     self.base += self.delta_base as u64;
@@ -386,7 +386,7 @@ impl Iterator for SignedDeltaRun {
                 self.index += 1;
                 return self.base;
             }
-            if index == 1 {
+            if index == 1 || self.bit_width == 0 {
                 self.index += 1;
                 if self.delta_base > 0 {
                     self.base += self.delta_base as i64;
@@ -396,6 +396,7 @@ impl Iterator for SignedDeltaRun {
                 return self.base;
             }
             self.index += 1;
+            // edge case where `bit_width == 0`, where deltas are equal to base delta
             let delta = unpack(&self.encoded_deltas, self.bit_width, index - 2);
             if self.delta_base > 0 {
                 self.base += delta as i64;
