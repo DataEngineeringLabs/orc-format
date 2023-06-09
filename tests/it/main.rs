@@ -3,6 +3,8 @@ use std::fs::File;
 mod deserialize;
 use deserialize::*;
 
+mod compare_json;
+
 use orc_format::{error::Error, read, read::Column};
 
 fn get_column(path: &str, column: u32) -> Result<Column, Error> {
