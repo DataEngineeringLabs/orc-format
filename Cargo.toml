@@ -13,3 +13,6 @@ edition = "2021"
 prost = { version = "0.9.0" }
 flate2 = "1"
 fallible-streaming-iterator = { version = "0.1" }
+
+[dev-dependencies]
+json = "0.12"

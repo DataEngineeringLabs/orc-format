@@ -11,17 +11,21 @@ use orc_format::{
 };
 
 fn deserialize_validity(column: &Column, scratch: &mut Vec<u8>) -> Result<Vec<bool>, Error> {
-    let mut reader = column.get_stream(Kind::Present, std::mem::take(scratch))?;
+    match column.get_stream(Kind::Present, std::mem::take(scratch)) {
+        Ok(mut reader) => {
+            let mut validity = Vec::with_capacity(column.number_of_rows());
+            BooleanIter::new(&mut reader, column.number_of_rows()).try_for_each(|item| {
+                validity.push(item?);
+                Result::<(), Error>::Ok(())
+            })?;
 
-    let mut validity = Vec::with_capacity(column.number_of_rows());
-    BooleanIter::new(&mut reader, column.number_of_rows()).try_for_each(|item| {
-        validity.push(item?);
-        Result::<(), Error>::Ok(())
-    })?;
+            *scratch = std::mem::take(&mut reader.into_inner());
 
-    *scratch = std::mem::take(&mut reader.into_inner());
-
-    Ok(validity)
+            Ok(validity)
+        },
+        Err(Error::InvalidKind(_, _)) => Ok(vec![true; column.number_of_rows()]),
+        Err(e) => Err(e),
+    }
 }
 
 pub fn deserialize_f32_array(column: &Column) -> Result<(Vec<bool>, Vec<f32>), Error> {

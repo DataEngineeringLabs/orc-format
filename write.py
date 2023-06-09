@@ -1,3 +1,5 @@
+import gzip
+import json
 import random
 
 import pyorc
@@ -64,9 +66,11 @@ def _write(
         compression=compression,
     )
     num_rows = len(list(data.values())[0])
-    for x in range(num_rows):
-        row = tuple(values[x] for values in data.values())
-        writer.write(row)
+    with gzip.open(file_name.replace(".orc", ".jsn.gz"), "wt") as f:
+        for x in range(num_rows):
+            row = tuple(values[x] for values in data.values())
+            writer.write(row)
+            f.write(json.dumps(row) + "\n")
     writer.close()
 
     with open(file_name, "rb") as f:
